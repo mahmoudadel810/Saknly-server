@@ -18,9 +18,11 @@ router.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'development',
+        secure: process.env.NODE_ENV === 'production',
         maxAge: 24 * 60 * 60 * 1000 // 24 ساعة
-    }
+    },
+    // Disable session storage for serverless environments
+    store: process.env.VERCEL ? null : undefined
 }));
 
 // Initialize Passport

@@ -72,6 +72,18 @@ const initiateApp = (routes = {}) =>
         });
     });
 
+    // Root route handler
+    app.get('/', (req, res) =>
+    {
+        res.status(200).json({
+            success: true,
+            message: 'Welcome to Saknly API!',
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+            documentation: '/api/saknly/v1/health'
+        });
+    });
+
     // Register all route modules
     if (routes)
     {
