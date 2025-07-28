@@ -37,7 +37,22 @@ const initiateApp = (routes = {}) =>
 
     // CORS configuration
     app.use(cors({
-        origin: process.env.CLIENT_URL || 'http://localhost:3000',
+        origin: function (origin, callback) {
+            // Allow requests with no origin (like mobile apps or curl requests)
+            if (!origin) return callback(null, true);
+            
+            const allowedOrigins = [
+                'http://localhost:3000',
+                'https://saknly-ruddy.vercel.app',
+                process.env.CLIENT_URL
+            ].filter(Boolean); // Remove any undefined values
+            
+            if (allowedOrigins.indexOf(origin) !== -1) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS','PATCH'],
         allowedHeaders: ['Content-Type', 'Authorization']
