@@ -1,5 +1,17 @@
 import winston from 'winston';
 import path from 'path';
+import fs from 'fs';
+
+// Detect if running on Vercel (serverless)
+const isServerless = !!process.env.VERCEL;
+
+// Only create logs directory if not serverless
+const logDir = 'logs';
+if (!isServerless) {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir);
+  }
+}
 
 // Simple console format
 const consoleFormat = winston.format.combine(
@@ -22,52 +34,62 @@ const fileFormat = winston.format.combine(
     winston.format.json()
 );
 
-// Create logger with simple configuration
-const logger = winston.createLogger({
-    level: 'debug', // Show all logs in development
-    format: fileFormat,
-    transports: [
-        // Console transport - always show logs
-        new winston.transports.Console({
-            format: consoleFormat,
-            level: 'debug'
-        }),
+// Define transports based on environment
+const transports = [
+    new winston.transports.Console({
+        format: consoleFormat,
+        level: 'debug'
+    })
+];
 
-        // File transport for errors only
+if (!isServerless) {
+    transports.push(
         new winston.transports.File({
-            filename: path.join('logs', 'error.log'),
+            filename: path.join(logDir, 'error.log'),
             level: 'error',
             format: fileFormat
         }),
-
-        // File transport for all logs
         new winston.transports.File({
-            filename: path.join('logs', 'combined.log'),
+            filename: path.join(logDir, 'combined.log'),
             format: fileFormat
         })
-    ],
+    );
+}
 
-    // Handle uncaught exceptions
-    exceptionHandlers: [
-        new winston.transports.Console({
-            format: consoleFormat
-        }),
+// Exception and rejection handlers
+const exceptionHandlers = [
+    new winston.transports.Console({
+        format: consoleFormat
+    })
+];
+const rejectionHandlers = [
+    new winston.transports.Console({
+        format: consoleFormat
+    })
+];
+
+if (!isServerless) {
+    exceptionHandlers.push(
         new winston.transports.File({
-            filename: path.join('logs', 'exceptions.log'),
+            filename: path.join(logDir, 'exceptions.log'),
             format: fileFormat
         })
-    ],
-
-    // Handle unhandled rejections
-    rejectionHandlers: [
-        new winston.transports.Console({
-            format: consoleFormat
-        }),
+    );
+    rejectionHandlers.push(
         new winston.transports.File({
-            filename: path.join('logs', 'rejections.log'),
+            filename: path.join(logDir, 'rejections.log'),
             format: fileFormat
         })
-    ]
+    );
+}
+
+// Create logger with configuration
+const logger = winston.createLogger({
+    level: 'debug',
+    format: fileFormat,
+    transports,
+    exceptionHandlers,
+    rejectionHandlers
 });
 
 // Stream for Morgan integration
