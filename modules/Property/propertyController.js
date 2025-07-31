@@ -169,7 +169,7 @@ export const addProperty = asyncHandler(async (req, res, next) =>
     {
         return next(new AppError('Authentication error: User ID is missing.', 401));
     }
-
+ 
     // 4. Map uploaded files to the format required by the Property schema
     const mediaLinks = (uploadedFiles || []).map(file => ({
         publicId: file.public_id, // Corrected from file.filename
