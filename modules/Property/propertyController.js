@@ -172,8 +172,8 @@ export const addProperty = asyncHandler(async (req, res, next) =>
 
     // 4. Map uploaded files to the format required by the Property schema
     const mediaLinks = (uploadedFiles || []).map(file => ({
-        publicId: file.filename, // public_id from Cloudinary
-        url: file.path,          // secure_url from Cloudinary
+        publicId: file.public_id, // Corrected from file.filename
+        url: file.path,           // secure_url from Cloudinary
         isMain: false
     }));
 
@@ -249,7 +249,7 @@ export const updateProperty = asyncHandler(async (req, res, next) =>
     }
 
     const newlyUploadedImages = (newFiles || []).map(file => ({
-        publicId: file.filename,
+        publicId: file.public_id, // Corrected from file.filename
         url: file.path,
         isMain: false,
     }));
