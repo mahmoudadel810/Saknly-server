@@ -15,21 +15,30 @@
   "env": {
     "NODE_ENV": "production"
   },
+  "functions": {
+    "index.js": {
+      "maxDuration": 30
+    }
+  },
   "headers": [
     {
-      "source": "/api/(.*)",
+      "source": "/api/saknly/v1/(.*)",
       "headers": [
         {
           "key": "Access-Control-Allow-Origin",
-          "value": "*"
+          "value": "https://saknly-ruddy.vercel.app"
         },
         {
           "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, PUT, DELETE, OPTIONS"
+          "value": "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         },
         {
           "key": "Access-Control-Allow-Headers",
           "value": "Content-Type, Authorization"
+        },
+        {
+          "key": "Access-Control-Allow-Credentials",
+          "value": "true"
         }
       ]
     }
