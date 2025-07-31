@@ -47,7 +47,14 @@ const userSchema = new mongoose.Schema(
         },
         phone: {
             type: String,
+            required: [true, 'Phone number is required'],
             trim: true,
+            validate: {
+                validator: function(v) {
+                    return /^01[0-9]{9}$/.test(v);
+                },
+                message: props => `${props.value} is not a valid Egyptian phone number! Must be 11 digits starting with 01`
+            },
             // match: [/^[\+]?[1-9][\d]{0,15}$/, 'Please enter a valid phone number'],
             // required: [true, 'Phone number is required'],
             required: function () {

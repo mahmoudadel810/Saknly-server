@@ -26,7 +26,7 @@ router.post(
     protect,
 
     // authorize('user','admin', 'agent'),
-    uploader.array('media', 20),
+    uploader.array('media', 8), // Reduced from 20 to 8 files
     validation(PropertyValidator),
     propertyController.addProperty
 );
@@ -35,7 +35,7 @@ router.put(
     '/updateProperty/:id',
     protect,
     authorize('admin', 'agent'),
-    uploader.array('newMedia', 20),
+    uploader.array('newMedia', 8), // Reduced from 20 to 8 files
     validation(PropertyValidator),
     propertyController.updateProperty
 );

@@ -35,9 +35,9 @@ export const registerValidator = {
         }),
         phone: joi.string()
             .required()
-            .pattern(/^[\+]?[0-9]{10,15}$/)
+            .pattern(/^01[0-9]{9}$/)
             .messages({
-                "string.pattern.base": "Please enter a valid phone number"
+                "string.pattern.base": "الرجاء إدخال رقم هاتف صحيح مكون من 11 رقم يبدأ بـ 01"
             }),
         address: joi.string().required().messages({
             "any.required": "please enter your address"
