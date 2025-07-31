@@ -1,17 +1,9 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "index.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/index.js"
-    }
-  ],
+  "buildCommand": "npm install",
+  "outputDirectory": ".",
+  "framework": "node",
+  "installCommand": "npm install",
+  "devCommand": "npm run dev",
   "env": {
     "NODE_ENV": "production"
   },
