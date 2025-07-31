@@ -58,6 +58,19 @@ export const errorHandler = (err, req, res, next) =>
         console.log(`ERROR [${statusCode}]: ${message}`);
     }
 
+    // Joi validation error (from our custom validation middleware)
+    if (err.message && err.message.includes('Validation failed:'))
+    {
+        statusCode = 400;
+        console.log('=== VALIDATION ERROR ===');
+        console.log('Error message:', err.message);
+        console.log('Request URL:', req.originalUrl);
+        console.log('Request method:', req.method);
+        console.log('Request body keys:', Object.keys(req.body || {}));
+        console.log('Files:', req.files ? req.files.length : 0);
+        console.log('Content-Type:', req.headers['content-type']);
+    }
+
     // JWT errors
     if (err.name === 'JsonWebTokenError')
     {

@@ -116,6 +116,12 @@ router.post(
         next();
     },
     validation(PropertyValidator),
+    (req, res, next) => {
+        console.log('=== VALIDATION PASSED ===');
+        console.log('Request body after validation:', req.body);
+        console.log('Files after validation:', req.files ? req.files.length : 0);
+        next();
+    },
     propertyController.addProperty
 );
 

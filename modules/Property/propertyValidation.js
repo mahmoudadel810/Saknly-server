@@ -29,7 +29,7 @@ export const PropertyValidator = joi.object({
         category: joi.string().valid('sale', 'rent', 'student').required()
     }).messages({
         "object.unknown": "Unknown field detected in request body"
-    }).options({ abortEarly: false, allowUnknown: false, stripUnknown: true }),
-    files: joi.array().optional()
+    }).options({ abortEarly: false, allowUnknown: true, stripUnknown: true }),
+    files: joi.any().optional()
 });
 
