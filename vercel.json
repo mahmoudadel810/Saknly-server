@@ -1,7 +1,6 @@
 {
   "buildCommand": "npm install",
   "outputDirectory": ".",
-  "framework": "node",
   "installCommand": "npm install",
   "devCommand": "npm run dev",
   "env": {
