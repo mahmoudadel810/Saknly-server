@@ -63,6 +63,14 @@ const propertySchema = new mongoose.Schema(
                 message: 'Invalid property type'
             }
         },
+        category: {
+            type: String,
+            required: [true, 'Property category is required'],
+            enum: {
+                values: ['sale', 'rent', 'student'],
+                message: 'Invalid property category. Must be: sale, rent, or student'
+            }
+        },
         price: {
             type: Number,
             required: [true, 'Property price is required'],

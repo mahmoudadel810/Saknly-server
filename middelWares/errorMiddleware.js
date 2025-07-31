@@ -78,6 +78,25 @@ export const errorHandler = (err, req, res, next) =>
         statusCode = 400;
     }
 
+    // Multer "Unexpected field" error
+    if (err.message === 'Unexpected field')
+    {
+        message = `Invalid file field name. Please check the form field names. Error details: ${err.message}`;
+        statusCode = 400;
+        console.log('=== MULTER UNEXPECTED FIELD ERROR ===');
+        console.log('Error message:', err.message);
+        console.log('Error stack:', err.stack);
+        console.log('Request URL:', req.originalUrl);
+        console.log('Request method:', req.method);
+        console.log('Request headers:', req.headers);
+        console.log('Content-Type:', req.headers['content-type']);
+        console.log('Request body keys:', Object.keys(req.body || {}));
+        console.log('Files:', req.files);
+        console.log('File field names:', req.files ? req.files.map(f => f.fieldname) : 'No files');
+        console.log('Expected field name: images');
+        console.log('All field names in request:', Object.keys(req.body || {}));
+    }
+
     // Email errors
     if (err.message && err.message.includes('ENOTFOUND'))
     {

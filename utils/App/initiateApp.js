@@ -87,6 +87,16 @@ const initiateApp = (routes = {}) =>
         });
     });
 
+    // Test route to verify the app is working
+    app.get('/api/saknly/v1/test', (req, res) => {
+        console.log('=== APP TEST ROUTE HIT ===');
+        res.json({ 
+            message: 'App is working',
+            routes: Object.keys(routes || {}),
+            timestamp: new Date().toISOString()
+        });
+    });
+
     // Root route handler
     app.get('/', (req, res) =>
     {
@@ -106,7 +116,12 @@ const initiateApp = (routes = {}) =>
         {
             if (routes[key].path && routes[key].router)
             {
+                console.log(`Registering route: ${routes[key].path}`);
+                console.log(`Route key: ${key}`);
+                console.log(`Route path: ${routes[key].path}`);
+                console.log(`Route router type: ${typeof routes[key].router}`);
                 app.use(routes[key].path, routes[key].router);
+                console.log(`Route registered successfully: ${routes[key].path}`);
             }
         });
     }

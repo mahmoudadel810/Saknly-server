@@ -154,15 +154,20 @@ export const searchProperties = asyncHandler(async (req, res, next) => {
 
 export const addProperty = asyncHandler(async (req, res, next) =>
 {
+    console.log('=== ADD PROPERTY DEBUG ===');
+    console.log('Request body:', req.body);
+    console.log('Uploaded files:', req.files);
+    console.log('User:', req.user);
+    console.log('File fieldnames:', req.files ? req.files.map(f => f.fieldname) : 'No files');
+    console.log('All request fields:', Object.keys(req.body || {}));
+    
     const { category, ...propertyData } = req.body;
     const uploadedFiles = req.files;
 
-    // 2. Select the correct Mongoose model based on the category
-    let PropertyModel;
-    if (category === 'sale') PropertyModel = SaleProperty;
-    else if (category === 'rent') PropertyModel = RentProperty;
-    else if (category === 'student') PropertyModel = StudentProperty;
-    else return next(new AppError('Invalid property category provided.', 400));
+    // 2. Validate category
+    if (!category || !['sale', 'rent', 'student'].includes(category)) {
+        return next(new AppError('Invalid property category provided. Must be: sale, rent, or student.', 400));
+    }
 
     // 3. Ensure the user is authenticated
     if (!req.user || !req.user._id)
@@ -171,11 +176,16 @@ export const addProperty = asyncHandler(async (req, res, next) =>
     }
  
     // 4. Map uploaded files to the format required by the Property schema
-    const mediaLinks = (uploadedFiles || []).map(file => ({
-        publicId: file.public_id, // Corrected from file.filename
-        url: file.path,           // secure_url from Cloudinary
-        isMain: false
-    }));
+    console.log('Processing uploaded files:', uploadedFiles);
+    const mediaLinks = (uploadedFiles || []).map(file => {
+        console.log('Processing file:', file);
+        console.log('File fieldname:', file.fieldname);
+        return {
+            publicId: file.public_id, // Corrected from file.filename
+            url: file.path,           // secure_url from Cloudinary
+            isMain: false
+        };
+    });
 
     // 5. Designate the first uploaded file as the main image/media
     if (mediaLinks.length > 0)
@@ -186,6 +196,7 @@ export const addProperty = asyncHandler(async (req, res, next) =>
     // 6. Create a new property instance with all data
     let newPropertyData = {
         ...propertyData,
+        category: category, // Add category to the data
         owner: req.user._id,
         images: mediaLinks,
     };
@@ -198,6 +209,7 @@ export const addProperty = asyncHandler(async (req, res, next) =>
             longitude: parseFloat(req.body['location[longitude]'])
         };
     }
+    
     if (req.user.role === 'user') {
         newPropertyData.status = 'pending';
         newPropertyData.isApproved = false;
@@ -209,12 +221,24 @@ export const addProperty = asyncHandler(async (req, res, next) =>
         newPropertyData.approvedBy = req.user._id;
         newPropertyData.approvedAt = new Date();
     }
-    const newProperty = new PropertyModel(newPropertyData);
+    
+    // 7. Use the base Property model - Mongoose will automatically use the correct discriminator based on category
+    console.log('Creating property with data:', newPropertyData);
+    const newProperty = new propertyModel(newPropertyData);
 
-    // 7. Save the new property to the database
-    await newProperty.save();
+    // 8. Save the new property to the database
+    console.log('Saving property to database...');
+    try {
+        await newProperty.save();
+        console.log('Property saved successfully:', newProperty._id);
+    } catch (error) {
+        console.error('Error saving property:', error);
+        console.error('Error details:', error.message);
+        console.error('Error stack:', error.stack);
+        throw error;
+    }
 
-    // 8. If property has an agency, push its ID to the agency's properties array
+    // 9. If property has an agency, push its ID to the agency's properties array
     if (newProperty.agency) {
       await Agency.findByIdAndUpdate(newProperty.agency, { $addToSet: { properties: newProperty._id } });
     }

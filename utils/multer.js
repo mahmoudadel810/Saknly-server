@@ -108,10 +108,19 @@ const createOptimizedStorage = (folder = 'saknly') => {
 export function createUploader(customValidation = allowedMimeTypes.image) {
   // Create file filter with better error handling
   const fileFilter = (req, file, cb) => {
+    console.log('=== MULTER FILE FILTER ===');
+    console.log('File fieldname:', file.fieldname);
+    console.log('File mimetype:', file.mimetype);
+    console.log('File originalname:', file.originalname);
+    console.log('Expected fieldname: images');
+    console.log('Allowed mimetypes:', customValidation);
+    
     if (customValidation.includes(file.mimetype)) {
+      console.log('File type accepted');
       return cb(null, true);
     }
     
+    console.log('File type rejected');
     const error = new AppError(
       `Invalid file type. Allowed types: ${customValidation.join(', ')}`,
       400
@@ -120,7 +129,7 @@ export function createUploader(customValidation = allowedMimeTypes.image) {
   };
 
   // Create multer instance with Vercel-optimized settings
-  return multer({
+  const multerInstance = multer({
     storage: createOptimizedStorage(),
     fileFilter,
     limits: {
@@ -130,6 +139,20 @@ export function createUploader(customValidation = allowedMimeTypes.image) {
     },
     preservePath: true
   });
+  
+  console.log('=== MULTER INSTANCE CREATED ===');
+  console.log('Multer configuration:', {
+    storage: 'createOptimizedStorage',
+    fileFilter: 'custom fileFilter',
+    limits: {
+      fileSize: '4MB',
+      files: 8,
+      fieldSize: '2MB'
+    },
+    preservePath: true
+  });
+  
+  return multerInstance;
 }
 
 // Export the default uploader with image validation
