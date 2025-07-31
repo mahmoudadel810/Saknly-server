@@ -1,16 +1,19 @@
 {
-  "buildCommand": "npm install",
-  "outputDirectory": ".",
-  "installCommand": "npm install",
-  "devCommand": "npm run dev",
+  "version": 2,
+  "builds": [
+    {
+      "src": "index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/index.js"
+    }
+  ],
   "env": {
     "NODE_ENV": "production"
-  },
-  "functions": {
-    "index.js": {
-      "maxDuration": 30,
-      "memory": 1024
-    }
   },
   "headers": [
     {
