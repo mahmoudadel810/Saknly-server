@@ -10,19 +10,67 @@ const PROPERTY_TYPES = {
     DUPLEX: 'دوبلكس',
 };
 
-// Enum values for cities
-const CITIES = [
-    'شبين الكوم',
-    'منوف',
-    'تلا',
-    'اشمون', // without hamza
-    'أشمون', // with hamza
-    'قويسنا',
-    'بركة السبع',
-    'الباجور',
-    'طنطا',
-    'مدينة السادات'
-];
+// Egypt's 27 governorates and the cities/districts offered in each.
+// Keep identical to client/shared/constants/property.ts. A city name belongs to exactly one governorate,
+// so a listing's governorate can always be derived from its city.
+const CITIES_BY_GOVERNORATE = {
+    'القاهرة': [
+        'القاهرة الجديدة', 'مدينة نصر', 'المعادي', 'مصر الجديدة', 'العاصمة الإدارية الجديدة', 'مدينتي', 'الشروق',
+        'الرحاب', 'المقطم', 'عين شمس', 'حلوان', 'الزمالك', 'وسط البلد', 'شبرا', 'المرج', 'بدر', '15 مايو',
+    ],
+    'الجيزة': [
+        'مدينة 6 أكتوبر', 'الشيخ زايد', 'حدائق أكتوبر', 'الهرم', 'فيصل', 'الدقي', 'المهندسين', 'العجوزة',
+        'إمبابة', 'الجيزة',
+    ],
+    'الإسكندرية': [
+        'سموحة', 'سيدي بشر', 'ميامي', 'العجمي', 'رشدي', 'المنتزه', 'سيدي جابر', 'محرم بك', 'برج العرب',
+        'وسط الإسكندرية',
+    ],
+    'القليوبية': ['بنها', 'العبور', 'شبرا الخيمة', 'قليوب', 'الخانكة'],
+    'المنوفية': [
+        'شبين الكوم', 'منوف', 'تلا',
+        'اشمون', // without hamza (alias kept for existing data)
+        'أشمون', // with hamza
+        'قويسنا', 'بركة السبع', 'الباجور', 'مدينة السادات', 'سرس الليان',
+    ],
+    'الغربية': ['طنطا', 'المحلة الكبرى', 'كفر الزيات', 'زفتى'],
+    'الدقهلية': ['المنصورة', 'المنصورة الجديدة', 'طلخا', 'ميت غمر'],
+    'الشرقية': ['الزقازيق', 'العاشر من رمضان', 'بلبيس'],
+    'البحيرة': ['دمنهور'],
+    'كفر الشيخ': ['كفر الشيخ'],
+    'دمياط': ['دمياط', 'دمياط الجديدة'],
+    'بورسعيد': ['بورسعيد'],
+    'الإسماعيلية': ['الإسماعيلية'],
+    'السويس': ['السويس'],
+    'الفيوم': ['الفيوم'],
+    'بني سويف': ['بني سويف'],
+    'المنيا': ['المنيا'],
+    'أسيوط': ['أسيوط'],
+    'سوهاج': ['سوهاج'],
+    'قنا': ['قنا'],
+    'الأقصر': ['الأقصر'],
+    'أسوان': ['أسوان'],
+    'البحر الأحمر': ['الغردقة'],
+    'الوادي الجديد': ['الخارجة'],
+    'مطروح': ['مرسى مطروح', 'العلمين الجديدة'],
+    'شمال سيناء': ['العريش'],
+    'جنوب سيناء': ['شرم الشيخ'],
+};
+
+const GOVERNORATES = Object.keys(CITIES_BY_GOVERNORATE);
+
+// Enum values for cities (every governorate's list, flattened)
+const CITIES = GOVERNORATES.flatMap((governorate) => CITIES_BY_GOVERNORATE[governorate]);
+
+const GOVERNORATE_OF_CITY = Object.fromEntries(
+    GOVERNORATES.flatMap((governorate) => CITIES_BY_GOVERNORATE[governorate].map((city) => [city, governorate]))
+);
+
+const governorateOfCity = (city) => GOVERNORATE_OF_CITY[city] || null;
+
+// Price and area bounds (Cairo villas pass 100M EGP; Cairo studios are smaller than 60 m²)
+const MAX_PRICE = 500000000;
+const MIN_AREA = 20;
 
 // Enum values for amenities
 const AMENITIES = [
@@ -75,12 +123,12 @@ const propertySchema = new mongoose.Schema(
             type: Number,
             required: [true, 'Property price is required'],
             min: [0, 'Price cannot be negative'],
-            max: [100000000 ,'Price cannot exceed 100M']
+            max: [MAX_PRICE, 'Price cannot exceed 500M']
         },
         area: {
             type: Number,
             required: [true, 'Total area is required'],
-            min: [60, 'Area must be at least 100sqm'],
+            min: [MIN_AREA, `Area must be at least ${MIN_AREA}sqm`],
         },
         bedrooms: {
             type: Number,
@@ -107,6 +155,16 @@ const propertySchema = new mongoose.Schema(
                 type: String,
                 required: [true, 'Address is required'],
                 trim: true,
+            },
+            // Derived from the city when not sent (see the pre('validate') hook)
+            governorate: {
+                type: String,
+                required: [true, 'Governorate is required'],
+                trim: true,
+                enum: {
+                    values: GOVERNORATES,
+                    message: 'Invalid governorate'
+                }
             },
             city: {
                 type: String,
@@ -287,6 +345,7 @@ const propertySchema = new mongoose.Schema(
 propertySchema.index({ type: 1, category: 1 });
 propertySchema.index({ price: 1 });
 propertySchema.index({ 'location.city': 1 });
+propertySchema.index({ 'location.governorate': 1, 'location.city': 1 });
 propertySchema.index({ 'location.latitude': 1, 'location.longitude': 1 });
 propertySchema.index({ status: 1 });
 propertySchema.index({ isApproved: 1 });
@@ -310,6 +369,22 @@ propertySchema.virtual('favoritesCount').get(function () {
 // Virtual for inquiries count
 propertySchema.virtual('inquiriesCount').get(function () {
     return Array.isArray(this.inquiries) ? this.inquiries.length : 0;
+});
+
+// The governorate follows the city: filled in when missing, re-derived when only the city changes,
+// and a city from another governorate is rejected.
+propertySchema.pre('validate', function (next) {
+    const location = this.location;
+    const city = location?.city;
+    const derived = governorateOfCity(city);
+    if (derived) {
+        const cityChangedAlone = this.isModified('location.city') && !this.isModified('location.governorate');
+        if (!location.governorate || (cityChangedAlone && !this.isNew)) location.governorate = derived;
+        else if (location.governorate !== derived) {
+            this.invalidate('location.city', `City ${city} is not in governorate ${location.governorate}`, city);
+        }
+    }
+    next();
 });
 
 // Pre-save middleware to generate slug
@@ -486,4 +561,7 @@ const StudentProperty = Property.discriminator('student',
 );
 
 export default Property;
-export { SaleProperty, RentProperty, StudentProperty, PROPERTY_TYPES, CITIES, AMENITIES }; 
+export {
+    SaleProperty, RentProperty, StudentProperty, PROPERTY_TYPES, CITIES, AMENITIES,
+    GOVERNORATES, CITIES_BY_GOVERNORATE, governorateOfCity, MAX_PRICE, MIN_AREA,
+};

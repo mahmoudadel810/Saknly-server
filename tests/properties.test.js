@@ -306,3 +306,53 @@ describe('approve and deny', () =>
         expect(stored.status).toBe('available');
     });
 });
+
+describe('governorates', () =>
+{
+    it('every city belongs to exactly one governorate', async () =>
+    {
+        const { CITIES, CITIES_BY_GOVERNORATE, GOVERNORATES } = await import('../Model/PropertyModel.js');
+        expect(GOVERNORATES).toHaveLength(27);
+        expect(new Set(CITIES).size).toBe(CITIES.length);
+        expect(Object.values(CITIES_BY_GOVERNORATE).every(list => list.length > 0)).toBe(true);
+    });
+
+    it('derives the governorate from the city, follows a city change and rejects a mismatch', async () =>
+    {
+        const app = await getApp();
+        const owner = await makeUser();
+        const token = tokenFor(owner);
+
+        const created = await request(app).post(`${API}/properties/addProperty`).set(auth(token))
+            .send(validBody({ location: { address: '90th St', city: 'القاهرة الجديدة' } }));
+        expect(created.status).toBe(201);
+        expect(created.body.data.location.governorate).toBe('القاهرة');
+
+        const mismatch = await request(app).post(`${API}/properties/addProperty`).set(auth(token))
+            .send(validBody({ location: { address: 'x', city: 'الشيخ زايد', governorate: 'القاهرة' } }));
+        expect(mismatch.status).toBe(400);
+
+        const moved = await request(app).put(`${API}/properties/updateProperty/${created.body.data._id}`).set(auth(token))
+            .send({ location: { city: 'الشيخ زايد' } });
+        expect(moved.status).toBe(200);
+        const stored = await Property.findById(created.body.data._id);
+        expect(stored.location.governorate).toBe('الجيزة');
+        expect(stored.location.address).toBe('90th St');
+    });
+
+    it('filters by governorate, alone or with a city', async () =>
+    {
+        const app = await getApp();
+        const owner = await makeUser();
+        await makeProperty(owner, { title: 'tanta' });
+        await makeProperty(owner, { title: 'zayed', location: { address: 'x', city: 'الشيخ زايد' } });
+        await makeProperty(owner, { title: 'october', location: { address: 'x', city: 'مدينة 6 أكتوبر' } });
+        await makeProperty(owner, { title: 'maadi', location: { address: 'x', city: 'المعادي' } });
+
+        const titles = async (q) => (await request(app).get(`${API}/properties/allProperties${encodeURI(q)}`)).body.data.map(p => p.title).sort();
+        expect(await titles('?governorate=الجيزة')).toEqual(['october', 'zayed']);
+        expect(await titles('?location.governorate=الجيزة,القاهرة')).toEqual(['maadi', 'october', 'zayed']);
+        expect(await titles('?location.governorate=الجيزة&location.city=الشيخ زايد')).toEqual(['zayed']);
+        expect(await titles('?search=الغربية')).toEqual(['tanta']);
+    });
+});

@@ -1,5 +1,5 @@
 import joi from 'joi';
-import { PROPERTY_TYPES, CITIES, AMENITIES } from '../../Model/PropertyModel.js';
+import { PROPERTY_TYPES, CITIES, AMENITIES, GOVERNORATES, MAX_PRICE, MIN_AREA } from '../../Model/PropertyModel.js';
 
 // Multipart bodies arrive as strings: Joi converts "5" -> 5 and "true" -> true,
 // and multer expands bracket keys (location[city]) into nested objects.
@@ -11,6 +11,8 @@ const objectId = () => joi.string().trim().pattern(/^[0-9a-fA-F]{24}$/).empty(''
 
 const locationFields = {
     address: str(300),
+    // optional: the model derives it from the city and rejects a city from another governorate
+    governorate: joi.string().trim().valid(...GOVERNORATES).empty(''),
     city: joi.string().trim().valid(...CITIES),
     district: str(100),
     latitude: num().min(-90).max(90),
@@ -29,8 +31,8 @@ const commonFields = {
     title: str(70),
     description: str(400),
     type: joi.string().trim().valid(...Object.values(PROPERTY_TYPES)),
-    price: num().min(0).max(100000000),
-    area: num().min(60),
+    price: num().min(0).max(MAX_PRICE),
+    area: num().min(MIN_AREA),
     bedrooms: num().integer().min(0).max(10),
     bathrooms: num().integer().min(1).max(10),
     floor: num().integer().min(0),

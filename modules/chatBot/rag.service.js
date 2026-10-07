@@ -13,6 +13,19 @@ const PUBLIC_FILTER = { isApproved: true, isActive: true };
 
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// The most specific place named in the question: a city first (longest name wins, so
+// "القاهرة الجديدة" beats "القاهرة"), then a governorate.
+const matchLocation = async (normalized) => {
+  const longest = (names) => names
+    .filter(name => name && normalized.includes(name.toLowerCase()))
+    .sort((a, b) => b.length - a.length)[0];
+  const city = longest(await Property.distinct("location.city", PUBLIC_FILTER));
+  if (city) return { key: "location.city", value: city, label: `مدينة ${city}` };
+  const governorate = longest(await Property.distinct("location.governorate", PUBLIC_FILTER));
+  if (governorate) return { key: "location.governorate", value: governorate, label: `محافظة ${governorate}` };
+  return null;
+};
+
 export const smartAskWithRAG = async (userQuestion) => {
   const normalized = userQuestion.toLowerCase().trim();
 
@@ -83,19 +96,18 @@ export const smartAskWithRAG = async (userQuestion) => {
 
   if (category === 'price-range') {
     const allProperties = await Property.find(PUBLIC_FILTER).select('category type price location');
-    const allCities = await Property.distinct("location.city", PUBLIC_FILTER);
+    const place = await matchLocation(normalized);
 
     const isRent = normalized.includes("إيجار") || normalized.includes("rent");
     const isSale = normalized.includes("بيع") || normalized.includes("sale");
     const knownTypes = ['شقة', 'فيلا', 'محل', 'استوديو', 'دوبلكس'];
     const selectedType = knownTypes.find(type => normalized.includes(type));
-    const matchedCity = allCities.find(city => city && normalized.includes(city.toLowerCase()));
 
     const filtered = allProperties.filter(p =>
       (isRent ? p.category === 'rent' : true) &&
       (isSale ? p.category === 'sale' : true) &&
       (selectedType ? p.type === selectedType : true) &&
-      (matchedCity ? p.location.city?.toLowerCase() === matchedCity.toLowerCase() : true)
+      (place ? p.get(place.key) === place.value : true)
     );
 
     if (filtered.length === 0) {
@@ -110,30 +122,29 @@ export const smartAskWithRAG = async (userQuestion) => {
     return `📊 ${
       isRent ? "متوسط أسعار الإيجار" : isSale ? "متوسط أسعار البيع" : "متوسط الأسعار"
     } ${selectedType ? `لعقار "${selectedType}"` : ""} ${
-      matchedCity ? `في مدينة ${matchedCity}` : ""
+      place ? `في ${place.label}` : ""
     } يتراوح بين ${min} و ${max} جنيه، بمتوسط ${avg} جنيه.`;
   }
 
   if (category === 'property') {
-    const allCities = await Property.distinct("location.city", PUBLIC_FILTER);
-    const matchedCity = allCities.find(city => city && normalized.includes(city.toLowerCase()));
+    const place = await matchLocation(normalized);
 
     const filter = {
       ...PUBLIC_FILTER,
-      ...(matchedCity && { "location.city": matchedCity }),
+      ...(place && { [place.key]: place.value }),
     };
 
     const properties = await Property.find(filter).select('type title location price description').limit(30);
 
     if (properties.length === 0) {
-      return `❌ لا توجد عقارات متاحة حالياً ${matchedCity ? `في ${matchedCity}` : 'في المنطقة المطلوبة'}.`;
+      return `❌ لا توجد عقارات متاحة حالياً ${place ? `في ${place.value}` : 'في المنطقة المطلوبة'}.`;
     }
 
     const context = properties.map((p, idx) =>
       `### 🏠 عقار رقم ${idx + 1}
 - النوع: ${p.type}
 - العنوان: ${p.title}
-- المدينة: ${p.location.city}
+- المدينة: ${p.location.city}${p.location.governorate ? ` (${p.location.governorate})` : ''}
 - العنوان التفصيلي: ${p.location.address}
 - السعر: ${p.price} جنيه
 - الوصف: ${p.description || 'لا يوجد وصف'}
@@ -151,11 +162,10 @@ export const smartAskWithRAG = async (userQuestion) => {
       isStudentFriendly: true
     };
 
-    const allCities = await Property.distinct("location.city", PUBLIC_FILTER);
-    const matchedCity = allCities.find(city => city && normalized.includes(city.toLowerCase()));
+    const place = await matchLocation(normalized);
 
-    if (matchedCity) {
-      filter["location.city"] = matchedCity;
+    if (place) {
+      filter[place.key] = place.value;
     } else {
       const addressKeywords = normalized.split(" ").filter(w => w.length > 2);
       if (addressKeywords.length > 0) {
@@ -172,7 +182,7 @@ export const smartAskWithRAG = async (userQuestion) => {
     const context = properties.map((p, idx) => `
 ### 🏡 سكن طلاب رقم ${idx + 1}
 - 🏠 الاسم: ${p.title}
-- 🏙️ المدينة: ${p.location.city}
+- 🏙️ المدينة: ${p.location.city}${p.location.governorate ? ` (${p.location.governorate})` : ''}
 - 📍 العنوان: ${p.location.address}
 - 💰 السعر: ${p.price} جنيه
 - ℹ️ الوصف: ${p.description || "لا يوجد وصف"}

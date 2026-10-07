@@ -29,7 +29,7 @@ export const getAdminAnalytics = asyncHandler(async (req, res) => {
   // Recent activity (last 5) - only display-safe fields
   const [recentProperties, recentAgencies, recentTestimonials] = await Promise.all([
     Property.find().sort({ createdAt: -1 }).limit(5)
-      .select('title category type price status isApproved isActive location.city createdAt'),
+      .select('title category type price status isApproved isActive location.governorate location.city createdAt'),
     Agency.find().sort({ createdAt: -1 }).limit(5).select('name logo isFeatured createdAt'),
     Testimonial.find().sort({ createdAt: -1 }).limit(5).select('name text type status createdAt'),
   ]);

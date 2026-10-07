@@ -3,6 +3,7 @@ const FILTERABLE_FIELDS = [
     'category',
     'type',
     'status',
+    'location.governorate',
     'location.city',
     'location.district',
     'bedrooms',
@@ -27,6 +28,7 @@ const NUMERIC_FIELDS = ['bedrooms', 'bathrooms', 'area', 'price', 'floor', 'down
 
 // Friendly aliases sent by some client pages
 const KEY_ALIASES = {
+    governorate: 'location.governorate',
     city: 'location.city',
     district: 'location.district',
     minPrice: 'price[gte]',
@@ -116,6 +118,7 @@ class ApiFeatures {
             conditions.$or = [
                 { title: regex },
                 { description: regex },
+                { 'location.governorate': regex },
                 { 'location.city': regex },
                 { 'location.address': regex },
                 { type: regex },

@@ -941,11 +941,12 @@ export const getSimilarProperties = asyncHandler(async (req, res, next) => {
     }
     const priceMin = currentProperty.price * 0.8;
     const priceMax = currentProperty.price * 1.2;
-    // public candidates sharing at least the city, the type or the price band
+    // public candidates sharing at least the governorate, the type or the price band
     const all = await propertyModel.find({
         _id: { $ne: currentProperty._id },
         $or: [
             { 'location.city': currentProperty.location?.city },
+            ...(currentProperty.location?.governorate ? [{ 'location.governorate': currentProperty.location.governorate }] : []),
             { type: currentProperty.type },
             { price: { $gte: priceMin, $lte: priceMax } },
         ],
@@ -955,6 +956,7 @@ export const getSimilarProperties = asyncHandler(async (req, res, next) => {
     const scored = all.map(p => {
         let score = 0;
         if (p.location?.city === currentProperty.location?.city) score++;
+        if (p.location?.governorate && p.location.governorate === currentProperty.location?.governorate) score++;
         if (p.type === currentProperty.type) score++;
         if (p.price >= priceMin && p.price <= priceMax) score++;
         if (p.area === currentProperty.area) score++;
