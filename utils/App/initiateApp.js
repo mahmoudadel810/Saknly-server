@@ -4,7 +4,6 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import connectDB, { ensureDbConnection, getDbState } from '../../DB/connection.js';
-import { apiLimiter } from '../rateLimiter.js';
 
 // Import middleware
 import { errorHandler, notFound } from '../../middelWares/errorMiddleware.js';
@@ -37,7 +36,7 @@ const initiateApp = (routes = {}) =>
     const app = express();
     const PORT = process.env.PORT || 5000;
 
-    // Behind Vercel's proxy: use X-Forwarded-For for req.ip (rate limiting)
+    // Behind Vercel's proxy: use X-Forwarded-For for req.ip
     app.set('trust proxy', 1);
 
     // Warm up the DB connection; failures are handled per request by ensureDbConnection
@@ -48,7 +47,7 @@ const initiateApp = (routes = {}) =>
         crossOriginResourcePolicy: { policy: "cross-origin" }
     }));
 
-    // CORS configuration (before the rate limiter so 429 responses still carry CORS headers)
+    // CORS configuration
     const allowedOrigins = buildAllowedOrigins();
     app.use(cors({
         origin: function (origin, callback)
@@ -63,9 +62,6 @@ const initiateApp = (routes = {}) =>
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
         allowedHeaders: ['Content-Type', 'Authorization', 'Content-Length']
     }));
-
-    // Rate limiting
-    app.use(apiLimiter);
 
     // parsing 
     app.use(express.json({ limit: '1mb' }));

@@ -6,7 +6,6 @@ import { validation } from '../../middelWares/validation.js';
 import { PropertyValidator, UpdatePropertyValidator } from './propertyValidation.js';
 import { admin, optionalAuth, protect } from '../../middelWares/authMiddleware.js';
 import { createUploader, allowedMimeTypes } from '../../utils/multer.js';
-import { fileUploadLimiter } from '../../utils/rateLimiter.js';
 
 const uploader = createUploader([
     ...allowedMimeTypes.image,
@@ -29,7 +28,6 @@ router.get('/myProperties', protect, propertyController.getUserProperties);
 router.post(
     '/addProperty',
     protect,
-    fileUploadLimiter,
     uploader.any(), // Accept any field name for files
     validation(PropertyValidator),
     propertyController.addProperty
@@ -39,7 +37,6 @@ router.post(
 router.put(
     '/updateProperty/:id',
     protect,
-    fileUploadLimiter,
     uploader.array('newImages', 8),
     validation(UpdatePropertyValidator),
     propertyController.updateProperty

@@ -14,7 +14,7 @@ A modern real estate platform API built with Node.js, Express, and MongoDB.
 - **Role-based Access**: User and Admin roles with appropriate permissions
 - **Data Validation**: Comprehensive input validation using Joi
 - **Error Handling**: Centralized error handling with detailed messages
-- **Security**: Rate limiting, CORS, Helmet, and input sanitization
+- **Security**: CORS, Helmet, and input sanitization
 - **Arabic Support**: RTL language support and Arabic content
 
 ## 🛠 Tech Stack

@@ -20,7 +20,6 @@ export default defineConfig({
             BEARER_KEY: 'Saknly__',
             CLIENT_URL: 'http://localhost:3000',
             SALT_ROUNDS: '8',
-            WHITELISTED_IPS: '127.0.0.1,::ffff:127.0.0.1,::1',
             GOOGLE_CLIENT_ID: '',
             GOOGLE_CLIENT_SECRET: '',
             GEMINI_API_KEY: '',

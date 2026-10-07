@@ -4,7 +4,6 @@ import { validation } from '../../middelWares/validation.js';
 import { addAgencyValidator, updateAgencyValidator } from './agencyValidation.js';
 import { createUploader, allowedMimeTypes } from '../../utils/multer.js';
 import { protect, authorize } from '../../middelWares/authMiddleware.js';
-import { fileUploadLimiter } from '../../utils/rateLimiter.js';
 
 const router = express.Router();
 const uploader = createUploader(allowedMimeTypes.image);
@@ -18,7 +17,6 @@ router.post(
   '/',
   protect,
   authorize('admin'),
-  fileUploadLimiter,
   uploader.single('logo'),
   validation(addAgencyValidator),
   agencyController.addAgency
@@ -28,7 +26,6 @@ router.put(
   '/:id',
   protect,
   authorize('admin'),
-  fileUploadLimiter,
   uploader.single('logo'),
   validation(updateAgencyValidator),
   agencyController.updateAgency

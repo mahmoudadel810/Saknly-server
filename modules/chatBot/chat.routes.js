@@ -1,12 +1,11 @@
 import express from 'express';
 import { smartAskWithRAG } from './rag.service.js';
-import { chatLimiter } from '../../utils/rateLimiter.js';
 import logger from '../../utils/logger.js';
 
 
 const router = express.Router();
 
-router.post('/', chatLimiter, async (req, res) =>
+router.post('/', async (req, res) =>
 {
     const { question } = req.body || {};
 
