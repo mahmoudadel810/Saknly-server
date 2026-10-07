@@ -12,7 +12,9 @@ export const smartAskWithRAG = async (userQuestion) => {
 
 
   // تحيات
-  if (/(أهلاً|ازيك|إزيك|مرحب|كيف حالك|عامل ايه|أخبارك|hello|hi|who are you)/i.test(normalized)) {
+  // English greetings must be whole words ("which", "this" contain "hi"). \b is ASCII-only in JS,
+  // so the Arabic alternatives keep substring matching.
+  if (/(أهلاً|ازيك|إزيك|مرحب|كيف حالك|عامل ايه|أخبارك|\bhello\b|\bhi\b|\bwho are you\b)/i.test(normalized)) {
 
     return `أهلاً وسهلاً! 👋  
 أنا سكّنلي بوت 🤖، المساعد الذكي لموقع "سكّنلي" المتخصص في بيع وشراء وتأجير العقارات.  
