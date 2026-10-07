@@ -47,31 +47,53 @@ const resolvePassword = (envName) =>
 
 const id = () => new mongoose.Types.ObjectId();
 
-// Stable public demo images (res.cloudinary.com is already allowed in the client's next.config.mjs)
-const DEMO_IMAGE_BASE = 'https://res.cloudinary.com/demo/image/upload';
-const PROPERTY_IMAGES = [
-    'docs/house.jpg',
-    'docs/bedroom.jpg',
-    'samples/people/kitchen-bar.jpg',
-    'samples/landscapes/architecture-signs.jpg',
-    'samples/landscapes/girl-urban-view.jpg',
-    'samples/landscapes/nature-mountains.jpg',
-    'samples/landscapes/beach-boat.jpg',
-    'sample.jpg',
+// Demo listing photos: real-estate photos from Unsplash (Unsplash License, free to use), served from
+// images.unsplash.com, which the client's next.config.mjs already allows. Each listing gets three photos that
+// match its type (apartment, villa, duplex, shop, studio, student room), indexed like the `properties` array
+// below. Every URL was checked to return 200 and to show property.
+const UNSPLASH = (photo) => `https://images.unsplash.com/${photo}?auto=format&fit=crop&w=1600&q=80`;
+const LISTING_PHOTOS = [
+    // 0 apartment for sale, Shebin El Kom: building, living room, kitchen
+    ['photo-1704640728496-bb1756181fda', 'photo-1560185127-6ed189bf02f4', 'photo-1732044790214-2930623d3edc'],
+    // 1 villa for sale, Sadat City: house and lawn, garden pool, living room
+    ['photo-1782939355849-4a748ada9c84', 'photo-1782939355736-fc6ed5c24b88', 'photo-1782939355626-8df602c595fb'],
+    // 2 duplex for sale, Menouf: two exteriors, living room
+    ['photo-1766603636700-e9d80473f40f', 'photo-1690731987727-ab5daed3620b', 'photo-1631510390389-c1e4fb20ff31'],
+    // 3 shop for sale, Quesna: storefront, counter, empty unit
+    ['photo-1782971638979-980f65112527', 'photo-1790049687819-9dd37662276e', 'photo-1641159930908-e9eb9ccdc002'],
+    // 4 furnished apartment for rent, Menouf: living room, bedroom, kitchen
+    ['photo-1560184897-67f4a3f9a7fa', 'photo-1560448075-57d0285fc59b', 'photo-1630699144641-72fa7a6b8aa1'],
+    // 5 duplex for rent, Tala: house with pool, living room, bedroom
+    ['photo-1613490493576-7fde63acd811', 'photo-1666585958641-4f70887372a1', 'photo-1630699375019-c334927264df'],
+    // 6 shop for rent, El Bagour: shopfront, corner shop, vacant units
+    ['photo-1734539724637-1f325ce24116', 'photo-1678528854861-7a05ff744221', 'photo-1748731268804-061cffd76797'],
+    // 7 apartment for rent, Ashmoun: building, living room, kitchen
+    ['photo-1704641116242-7d74a85b207d', 'photo-1630699034151-f6f726975c0a', 'photo-1630699293784-9f977570255a'],
+    // 8 student housing (girls): bedroom with desk, bedroom, kitchen
+    ['photo-1652882860938-f90aa298e644', 'photo-1638454668466-e8dbd5462f20', 'photo-1630699376167-3870469e7598'],
+    // 9 student studio: studio room, kitchenette, living corner
+    ['photo-1702014859878-5d4743176d28', 'photo-1702014862053-946a122b920d', 'photo-1702014859908-d48b9b844240'],
+    // 10 apartment for sale, Birket El Sab (pending): new building, facades
+    ['photo-1617341623760-1919df79274c', 'photo-1664813953897-ada06817c48c', 'photo-1784492003162-8897437fec4b'],
+    // 11 student rooms, Sadat City (pending): single rooms, study desk
+    ['photo-1614715661635-abb0547c125c', 'photo-1530334580314-1e7a340426a0', 'photo-1674162406360-df5ec5eb97e4'],
 ];
-const AGENCY_LOGOS = ['logo.png', 'cloudinary_icon.png', 'samples/cloudinary-icon.png'];
 
 // publicIds are namespaced "saknly-seed/..." so deleting a seeded listing never touches a real upload
-const imagesFor = (index, count = 3) => Array.from({ length: count }, (_, i) =>
-{
-    const file = PROPERTY_IMAGES[(index + i) % PROPERTY_IMAGES.length];
-    return {
-        publicId: `saknly-seed/property-${index + 1}-${i + 1}`,
-        url: `${DEMO_IMAGE_BASE}/${file}`,
-        alt: 'صورة العقار',
-        isMain: i === 0,
-    };
-});
+const imagesFor = (index) => LISTING_PHOTOS[index % LISTING_PHOTOS.length].map((photo, i) => ({
+    publicId: `saknly-seed/property-${index + 1}-${i + 1}`,
+    url: UNSPLASH(photo),
+    alt: 'صورة العقار',
+    isMain: i === 0,
+}));
+
+// Agency logos: a generated initials mark (SVG data URI) instead of a borrowed image. The client renders
+// data: URLs unoptimized (shared/ui/listing/AgencyLogo.tsx).
+const initialsLogo = (letter, background) => `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="20" fill="${background}"/>`
+    + `<text x="48" y="50" text-anchor="middle" dominant-baseline="central" font-family="IBM Plex Sans Arabic, Tahoma, Arial, sans-serif" font-size="48" font-weight="700" fill="#FFFFFF">${letter}</text></svg>`,
+)}`;
+const AGENCY_LOGOS = [initialsLogo('د', '#0E5E57'), initialsLogo('م', '#1F5F99'), initialsLogo('س', '#A15C07')];
 
 const buildData = () =>
 {
@@ -108,7 +130,7 @@ const buildData = () =>
         { _id: id(), name: 'السادات هومز', description: 'وحدات سكنية وفيلات في مدينة السادات بالقرب من الجامعة والمنطقة الصناعية.', isFeatured: false },
     ].map((agency, i) => ({
         ...agency,
-        logo: { publicId: `saknly-seed/agency-${i + 1}`, url: `${DEMO_IMAGE_BASE}/${AGENCY_LOGOS[i]}` },
+        logo: { publicId: `saknly-seed/agency-${i + 1}`, url: AGENCY_LOGOS[i] },
         properties: [],
     }));
     const [delta, menoufia, sadat] = agencies;
@@ -130,14 +152,14 @@ const buildData = () =>
         {
             title: 'شقة للبيع بشارع الجمهورية في شبين الكوم', description: 'شقة 150 متر تشطيب سوبر لوكس، 3 غرف نوم وحمامين وريسبشن كبير، قريبة من جامعة المنوفية.',
             type: T.APARTMENT, category: 'sale', price: 1850000, area: 150, bedrooms: 3, bathrooms: 2, floor: 4, totalFloors: 8,
-            location: { address: 'شارع الجمهورية', city: 'شبين الكوم', district: 'وسط البلد', latitude: 30.5590, longitude: 31.0108 },
+            location: { address: 'شارع الجمهورية', governorate: 'المنوفية', city: 'شبين الكوم', district: 'وسط البلد', latitude: 30.5590, longitude: 31.0108 },
             amenities: ['تكييف', 'مصعد', 'شرفة'], paymentMethod: 'cash', ownershipType: 'resale', propertyStatus: 'ready',
             ...base(sara, 'سارة إبراهيم', sara.phone), agency: delta._id, views: 240, isNegotiable: true,
         },
         {
             title: 'فيلا مستقلة للبيع في مدينة السادات', description: 'فيلا 350 متر مع حديقة خاصة وجراج، تقسيط حتى 7 سنوات.',
             type: T.VILLA, category: 'sale', price: 6500000, area: 350, bedrooms: 5, bathrooms: 4, floor: 0, totalFloors: 2,
-            location: { address: 'الحي السابع', city: 'مدينة السادات', district: 'الحي السابع', latitude: 30.3626, longitude: 30.5263 },
+            location: { address: 'الحي السابع', governorate: 'المنوفية', city: 'مدينة السادات', district: 'الحي السابع', latitude: 30.3626, longitude: 30.5263 },
             amenities: ['موقف سيارات', 'أمن', 'مطبخ مجهز'], paymentMethod: 'cashOrInstallment', downPayment: 1500000,
             installmentPeriodInYears: 7, minInstallmentAmount: 45000, ownershipType: 'firstOwner', propertyStatus: 'ready',
             ...base(omar, 'عمر خالد', omar.phone), agency: sadat._id, views: 410,
@@ -145,7 +167,7 @@ const buildData = () =>
         {
             title: 'دوبلكس للبيع في منوف تحت الإنشاء', description: 'دوبلكس 220 متر بمدخل خاص، استلام بعد سنة، مقدم 30% والباقي على 5 سنوات.',
             type: T.DUPLEX, category: 'sale', price: 2900000, area: 220, bedrooms: 4, bathrooms: 3, floor: 5, totalFloors: 6,
-            location: { address: 'شارع الجيش', city: 'منوف', district: 'الجيش' },
+            location: { address: 'شارع الجيش', governorate: 'المنوفية', city: 'منوف', district: 'الجيش' },
             amenities: ['مصعد', 'شرفة', 'مخزن'], paymentMethod: 'installment', downPayment: 870000, installmentPeriodInYears: 5,
             ownershipType: 'firstOwner', propertyStatus: 'underConstruction', deliveryDate: new Date('2027-12-31'),
             deliveryTerms: 'استلام نصف تشطيب',
@@ -154,7 +176,7 @@ const buildData = () =>
         {
             title: 'محل تجاري للبيع على الطريق الرئيسي في قويسنا', description: 'محل 75 متر بواجهة كبيرة، يصلح لجميع الأنشطة.',
             type: T.SHOP, category: 'sale', price: 1200000, area: 75, bedrooms: 0, bathrooms: 1, floor: 0, totalFloors: 4,
-            location: { address: 'طريق شبين - قويسنا', city: 'قويسنا', district: 'المحطة' },
+            location: { address: 'طريق شبين - قويسنا', governorate: 'المنوفية', city: 'قويسنا', district: 'المحطة' },
             amenities: ['أمن'], paymentMethod: 'cash', ownershipType: 'resale', propertyStatus: 'ready',
             ...base(fatma, 'فاطمة حسن', fatma.phone), views: 75,
         },
@@ -162,7 +184,7 @@ const buildData = () =>
         {
             title: 'شقة مفروشة للإيجار في منوف', description: 'شقة 120 متر مفروشة جزئياً، غرفتين نوم، قريبة من المستشفى العام.',
             type: T.APARTMENT, category: 'rent', price: 4500, area: 120, bedrooms: 2, bathrooms: 1, floor: 3, totalFloors: 5,
-            location: { address: 'شارع المستشفى', city: 'منوف' },
+            location: { address: 'شارع المستشفى', governorate: 'المنوفية', city: 'منوف' },
             amenities: ['تكييف', 'مفروشة جزئياً', 'مطبخ مجهز'], leaseDuration: 12, deposit: 9000,
             utilities: { included: false, cost: 400, details: 'الكهرباء والمياه على المستأجر' },
             rules: { pets: false, parties: false, other: 'للعائلات فقط' },
@@ -171,7 +193,7 @@ const buildData = () =>
         {
             title: 'دوبلكس للإيجار في تلا بمنطقة الفيلات', description: 'دوبلكس 250 متر بحديقة صغيرة، 4 غرف نوم و3 حمامات.',
             type: T.DUPLEX, category: 'rent', price: 9000, area: 250, bedrooms: 4, bathrooms: 3, floor: 0, totalFloors: 2,
-            location: { address: 'منطقة الفيلات بجوار النادي', city: 'تلا' },
+            location: { address: 'منطقة الفيلات بجوار النادي', governorate: 'المنوفية', city: 'تلا' },
             amenities: ['موقف سيارات', 'أمن', 'شرفة'], leaseDuration: 24, deposit: 18000,
             utilities: { included: false }, rules: { pets: true, parties: false },
             ...base(karim, 'كريم محمود', karim.phone), views: 95,
@@ -179,14 +201,14 @@ const buildData = () =>
         {
             title: 'محل للإيجار في الباجور', description: 'محل 60 متر على شارع تجاري حيوي.',
             type: T.SHOP, category: 'rent', price: 6000, area: 60, bedrooms: 0, bathrooms: 1, floor: 0,
-            location: { address: 'شارع البحر', city: 'الباجور' },
+            location: { address: 'شارع البحر', governorate: 'المنوفية', city: 'الباجور' },
             amenities: ['أمن'], leaseDuration: 36, deposit: 12000,
             ...base(mona, 'منى عادل', mona.phone), agency: delta._id, views: 40,
         },
         {
             title: 'شقة للإيجار في أشمون قريبة من الموقف', description: 'شقة 95 متر، غرفتين وصالة، دور ثاني.',
             type: T.APARTMENT, category: 'rent', price: 3000, area: 95, bedrooms: 2, bathrooms: 1, floor: 2, totalFloors: 4,
-            location: { address: 'شارع سعد زغلول', city: 'أشمون' },
+            location: { address: 'شارع سعد زغلول', governorate: 'المنوفية', city: 'أشمون' },
             amenities: ['شرفة'], leaseDuration: 12, deposit: 6000,
             ...base(mona, 'منى عادل', mona.phone), views: 60, isNegotiable: true,
         },
@@ -194,7 +216,7 @@ const buildData = () =>
         {
             title: 'سكن طالبات بجوار جامعة المنوفية', description: 'غرف مشتركة لطالبات الجامعة، شاملة الإنترنت والمرافق.',
             type: T.APARTMENT, category: 'student', price: 1800, area: 110, bedrooms: 3, bathrooms: 2, floor: 3, totalFloors: 5,
-            location: { address: 'خلف كلية الهندسة', city: 'شبين الكوم' },
+            location: { address: 'خلف كلية الهندسة', governorate: 'المنوفية', city: 'شبين الكوم' },
             amenities: ['مطبخ مجهز', 'أمن', 'تكييف'], leaseDuration: 9, deposit: 1800,
             utilities: { included: true, details: 'شاملة الكهرباء والمياه والإنترنت' },
             isStudentFriendly: true,
@@ -207,7 +229,7 @@ const buildData = () =>
         {
             title: 'استوديو لطالب قريب من كلية التجارة', description: 'استوديو 65 متر مستقل، مناسب لطالب واحد، قريب من المواصلات.',
             type: T.STUDIO, category: 'student', price: 2200, area: 65, bedrooms: 1, bathrooms: 1, floor: 1, totalFloors: 4,
-            location: { address: 'شارع كلية التجارة', city: 'شبين الكوم' },
+            location: { address: 'شارع كلية التجارة', governorate: 'المنوفية', city: 'شبين الكوم' },
             amenities: ['تكييف', 'مطبخ مجهز'], leaseDuration: 10, deposit: 2200,
             utilities: { included: true },
             isStudentFriendly: true,
@@ -221,7 +243,7 @@ const buildData = () =>
         {
             title: 'شقة للبيع في بركة السبع', description: 'شقة 130 متر، 3 غرف، نصف تشطيب في برج جديد.',
             type: T.APARTMENT, category: 'sale', price: 950000, area: 130, bedrooms: 3, bathrooms: 1, floor: 6, totalFloors: 10,
-            location: { address: 'شارع المحطة', city: 'بركة السبع' },
+            location: { address: 'شارع المحطة', governorate: 'المنوفية', city: 'بركة السبع' },
             amenities: ['مصعد'], paymentMethod: 'cash', ownershipType: 'firstOwner', propertyStatus: 'ready',
             ...base(fatma, 'فاطمة حسن', fatma.phone),
             status: 'pending', isApproved: false, isActive: false, approvedBy: undefined, approvedAt: undefined,
@@ -229,7 +251,7 @@ const buildData = () =>
         {
             title: 'سكن طلاب في مدينة السادات', description: 'غرف فردية لطلاب جامعة مدينة السادات مع مطبخ مشترك.',
             type: T.STUDIO, category: 'student', price: 1500, area: 70, bedrooms: 2, bathrooms: 1, floor: 2,
-            location: { address: 'الحي الثاني بجوار الجامعة', city: 'مدينة السادات' },
+            location: { address: 'الحي الثاني بجوار الجامعة', governorate: 'المنوفية', city: 'مدينة السادات' },
             amenities: ['مطبخ مجهز'], leaseDuration: 9,
             isStudentFriendly: true,
             studentHousingDetails: {
