@@ -1,6 +1,7 @@
 import User from "../../Model/UserModel.js";
 import { asyncHandler, AppError } from "../../middelWares/errorMiddleware.js";
 import Property from '../../Model/PropertyModel.js';
+import Comment from '../../Model/CommentModel.js';
 import { PUBLIC_PROPERTY_FILTER } from '../Property/propertyController.js';
 
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -67,10 +68,25 @@ export const getUserById = asyncHandler(async (req, res, next) => {
     });
 });
 
+// Lockout guard: is there another active admin besides this user?
+const hasOtherActiveAdmin = async (userId) =>
+    !!(await User.exists({ _id: { $ne: userId }, role: 'admin', status: 'active' }));
+
+const LAST_ADMIN_MESSAGE = 'This is the last active admin. Promote another admin first';
+
 //=========================Update User====================================
 export const updateUser = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
     const { userName, email, phone, address, role, status } = req.body;
+
+    // Demoting or deactivating the last active admin would lock everyone out of the admin area
+    const losesAdmin = (role !== undefined && role !== 'admin') || (status !== undefined && status !== 'active');
+    if (losesAdmin) {
+        const target = await User.findById(id).select('role status');
+        if (target && target.role === 'admin' && target.status === 'active' && !(await hasOtherActiveAdmin(target._id))) {
+            return next(new AppError(LAST_ADMIN_MESSAGE, 409));
+        }
+    }
 
     const updatedUser = await User.findByIdAndUpdate(
         id,
@@ -93,11 +109,30 @@ export const updateUser = asyncHandler(async (req, res, next) => {
 export const deleteUser = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
 
-    const deletedUser = await User.findByIdAndDelete(id);
+    if (req.user._id.equals(id)) {
+        return next(new AppError('You cannot delete your own account', 409));
+    }
 
+    const target = await User.findById(id).select('role status');
+    if (!target) {
+        return next(new AppError("User not found", 404));
+    }
+    if (target.role === 'admin' && target.status === 'active' && !(await hasOtherActiveAdmin(target._id))) {
+        return next(new AppError(LAST_ADMIN_MESSAGE, 409));
+    }
+
+    const deletedUser = await User.findByIdAndDelete(id);
     if (!deletedUser) {
         return next(new AppError("User not found", 404));
     }
+
+    // Clean up what pointed at the user. Their listings are unlisted, not deleted (media stays in
+    // Cloudinary so an admin can still review or reassign them); inquiries they sent are kept.
+    await Promise.all([
+        Property.updateMany({ owner: deletedUser._id }, { $set: { isActive: false, status: 'inactive' } }),
+        Property.updateMany({ favorites: deletedUser._id }, { $pull: { favorites: deletedUser._id } }),
+        Comment.deleteMany({ user: deletedUser._id }),
+    ]);
 
     res.status(200).json({
         success: true,
