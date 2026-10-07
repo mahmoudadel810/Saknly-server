@@ -1,10 +1,9 @@
 import User from "../../Model/UserModel.js";
 import { asyncHandler, AppError } from "../../middelWares/errorMiddleware.js";
 import Property from '../../Model/PropertyModel.js';
+import { PUBLIC_PROPERTY_FILTER } from '../Property/propertyController.js';
 
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const sameProperty = (item, propertyId) => !!item?.property && item.property.toString() === propertyId;
 
 //=========================Get All Users====================================
 export const getUsers = asyncHandler(async (req, res, next) => {
@@ -108,13 +107,17 @@ export const deleteUser = asyncHandler(async (req, res, next) => {
 
 //=========================Wishlist Functions====================================
 
-// Get user wishlist
+// The wishlist and Property.favorites are two views of the same relation: every write below
+// updates both with atomic operators (no read-modify-save), same as /properties/:id/favorite.
+
+// Get user wishlist (public listings only)
 export const getUserWishlist = asyncHandler(async (req, res, next) => {
     const userId = req.user._id;
 
     const user = await User.findById(userId)
         .populate({
             path: 'wishlist.property',
+            match: PUBLIC_PROPERTY_FILTER,
             populate: [
                 { path: 'owner', select: 'userName email' },
                 { path: 'agent', select: 'userName email' }
@@ -125,7 +128,7 @@ export const getUserWishlist = asyncHandler(async (req, res, next) => {
         return next(new AppError("User not found", 404));
     }
 
-    // Filter out any wishlist items where the property might have been deleted
+    // Deleted listings and listings that are no longer public populate to null
     const validWishlistItems = user.wishlist.filter(item => item.property);
 
     res.status(200).json({
@@ -136,44 +139,25 @@ export const getUserWishlist = asyncHandler(async (req, res, next) => {
     });
 });
 
-// Add property to user wishlist
+// Add property to user wishlist (public listings only, idempotent)
 export const addToWishlist = asyncHandler(async (req, res, next) => {
     const { propertyId } = req.params;
     const userId = req.user._id;
 
-    // Check if property exists
-    const property = await Property.findById(propertyId);
+    const property = await Property.findOne({ _id: propertyId, ...PUBLIC_PROPERTY_FILTER }).select('_id');
     if (!property) {
         return next(new AppError("Property not found", 404));
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-        return next(new AppError("User not found", 404));
-    }
-
-    // Check if property is already in wishlist
-    const existingItem = user.wishlist.find(item => sameProperty(item, propertyId));
-
-    if (existingItem) {
-        return res.status(200).json({
-            success: true,
-            message: 'Property is already in wishlist',
-            data: { propertyId }
-        });
-    }
-
-    // Add to wishlist
-    user.wishlist.push({
-        property: propertyId,
-        addedAt: new Date()
-    });
-
-    await user.save();
+    await Property.updateOne({ _id: property._id }, { $addToSet: { favorites: userId } });
+    const result = await User.updateOne(
+        { _id: userId, 'wishlist.property': { $ne: property._id } },
+        { $push: { wishlist: { property: property._id, addedAt: new Date() } } }
+    );
 
     res.status(200).json({
         success: true,
-        message: 'Property added to wishlist successfully',
+        message: result.modifiedCount > 0 ? 'Property added to wishlist successfully' : 'Property is already in wishlist',
         data: { propertyId }
     });
 });
@@ -183,15 +167,8 @@ export const removeFromWishlist = asyncHandler(async (req, res, next) => {
     const { propertyId } = req.params;
     const userId = req.user._id;
 
-    const user = await User.findById(userId);
-    if (!user) {
-        return next(new AppError("User not found", 404));
-    }
-
-    // Remove from wishlist (also drops entries whose property no longer exists)
-    user.wishlist = user.wishlist.filter(item => item?.property && !sameProperty(item, propertyId));
-
-    await user.save();
+    await Property.updateOne({ _id: propertyId }, { $pull: { favorites: userId } });
+    await User.updateOne({ _id: userId }, { $pull: { wishlist: { property: propertyId } } });
 
     res.status(200).json({
         success: true,
@@ -204,14 +181,15 @@ export const removeFromWishlist = asyncHandler(async (req, res, next) => {
 export const clearWishlist = asyncHandler(async (req, res, next) => {
     const userId = req.user._id;
 
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select('wishlist.property');
     if (!user) {
         return next(new AppError("User not found", 404));
     }
 
-    // Clear wishlist
-    user.wishlist = [];
-    await user.save();
+    // Remove exactly the entries read here, so an add racing the clear is not lost
+    const propertyIds = user.wishlist.map(item => item.property).filter(Boolean);
+    await Property.updateMany({ _id: { $in: propertyIds } }, { $pull: { favorites: userId } });
+    await User.updateOne({ _id: userId }, { $pull: { wishlist: { $or: [{ property: { $in: propertyIds } }, { property: null }] } } });
 
     res.status(200).json({
         success: true,
