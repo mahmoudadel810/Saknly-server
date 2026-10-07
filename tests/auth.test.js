@@ -172,6 +172,39 @@ describe('logout and token revocation', () =>
     });
 });
 
+describe('refresh-token accepts only access tokens (H1)', () =>
+{
+    it('an email-confirmation token cannot be exchanged for a session', async () =>
+    {
+        const app = await getApp();
+        await request(app).post(`${API}/auth/register`).send(registerBody()).expect(201);
+        const confirmationJwt = confirmationTokenFrom(sendEmail.mock.calls[0]);
+        await request(app).get(`${API}/auth/confirm-email/${confirmationJwt}`).expect(200);
+        await request(app).post(`${API}/auth/login`).send({ email: 'newcomer@example.test', password: PASSWORD }).expect(200);
+
+        const res = await request(app).post(`${API}/auth/refresh-token`).set(auth(confirmationJwt));
+        expect(res.status).toBe(401);
+        expect(res.body.token).toBeUndefined();
+    });
+
+    it('a token without the access-token role claim, or with a stale role, is refused', async () =>
+    {
+        const app = await getApp();
+        const user = await makeUser();
+        const { tokenFunction } = await import('../utils/tokenFunction.js');
+        const noRole = tokenFunction({ payload: { id: user._id, email: user.email } });
+        const staleRole = tokenFor(user, { role: 'admin' });
+        const purpose = tokenFor(user, { purpose: 'email-confirmation' });
+
+        for (const token of [noRole, staleRole, purpose])
+        {
+            expect((await request(app).post(`${API}/auth/refresh-token`).set(auth(token))).status).toBe(401);
+        }
+        // a normal session still refreshes
+        expect((await request(app).post(`${API}/auth/refresh-token`).set(auth(tokenFor(user)))).status).toBe(200);
+    });
+});
+
 describe('password reset', () =>
 {
     const requestCode = async (app, email) =>

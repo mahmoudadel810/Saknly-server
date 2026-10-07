@@ -23,6 +23,7 @@ const cookieOptions = () => ({
 });
 
 const RESET_CODE_TTL_MS = 15 * 60 * 1000;
+const EMAIL_CONFIRMATION_PURPOSE = 'email-confirmation';
 
 const confirmationEmailHtml = (userName, confirmationLink) => `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -176,7 +177,8 @@ const trySendEmail = async (options) =>
 const sendConfirmationEmail = async (user) =>
 {
     const token = tokenFunction({
-        payload: { id: user._id, email: user.email },
+        // purpose marks it as a non-session token: refresh-token refuses it
+        payload: { id: user._id, email: user.email, purpose: EMAIL_CONFIRMATION_PURPOSE },
         expiresIn: '24h',
         generate: true
     });
@@ -499,10 +501,20 @@ export const refreshToken = asyncHandler(async (req, res, next) => {
         return next(new AppError('Invalid token', 401));
     }
 
+    // Only access tokens can be refreshed: purpose-bound tokens (email confirmation) and tokens
+    // without the role claim are refused, as is a token whose role no longer matches the user
+    if (decoded.purpose || !decoded.role) {
+        return next(new AppError('Invalid token', 401));
+    }
+
     // Find user by ID from token
     const user = await userModel.findById(decoded.id);
     if (!user || !user.isConfirmed || !user.isLoggedIn || user.status !== 'active') {
         return next(new AppError('User not found or not authorized', 401));
+    }
+
+    if (decoded.role !== user.role) {
+        return next(new AppError('Token role mismatch. Please login again', 401));
     }
 
     // Tokens issued before the last logout can't be refreshed
