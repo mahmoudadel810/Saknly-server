@@ -202,15 +202,12 @@ export const register = asyncHandler(async (req, res, next) => {
 
     const normalizedEmail = String(email).toLowerCase().trim();
 
-    const checkUser = await userModel.findOne({ email: normalizedEmail });
+    // Any existing account, confirmed or not, keeps its password: replacing a pending account
+    // would let anyone take over a victim's unconfirmed registration. Unconfirmed owners use
+    // POST /auth/resend-confirmation. Same response either way, so confirmation state isn't revealed.
+    const checkUser = await userModel.exists({ email: normalizedEmail });
     if (checkUser)
-    {
-        if (checkUser.isConfirmed || checkUser.provider !== 'local')
-            return next(new AppError("This email is already registered", 409));
-
-        // An unconfirmed account is replaced (new _id, so old confirmation links stop working)
-        await userModel.deleteOne({ _id: checkUser._id, isConfirmed: false });
-    }
+        return next(new AppError("This email is already registered", 409));
 
     const hashedPassword = hashFunction({ payload: password });
 

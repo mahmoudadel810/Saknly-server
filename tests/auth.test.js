@@ -61,6 +61,28 @@ describe('register', () =>
         expect(res.status).toBe(409);
     });
 
+    it('re-registering an unconfirmed email does not replace the pending account (M3)', async () =>
+    {
+        const app = await getApp();
+        await request(app).post(`${API}/auth/register`).send(registerBody()).expect(201);
+        const original = await User.findOne({ email: 'newcomer@example.test' }).select('+password');
+        const firstLink = confirmationTokenFrom(sendEmail.mock.calls[0]);
+
+        const res = await request(app).post(`${API}/auth/register`)
+            .send(registerBody({ password: 'Att4cker!x', confirmPassword: 'Att4cker!x', userName: 'attacker' }));
+        expect(res.status).toBe(409);
+
+        const after = await User.findOne({ email: 'newcomer@example.test' }).select('+password');
+        expect(after._id.toString()).toBe(original._id.toString());
+        expect(after.password).toBe(original.password);
+        expect(after.userName).toBe(original.userName);
+
+        // the victim's original link still works and the original password logs in
+        await request(app).get(`${API}/auth/confirm-email/${firstLink}`).expect(200);
+        await request(app).post(`${API}/auth/login`).send({ email: 'newcomer@example.test', password: PASSWORD }).expect(200);
+        expect((await request(app).post(`${API}/auth/login`).send({ email: 'newcomer@example.test', password: 'Att4cker!x' })).status).toBe(400);
+    });
+
     it('a confirmation token is not a bearer token', async () =>
     {
         const app = await getApp();
