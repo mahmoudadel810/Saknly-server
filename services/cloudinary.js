@@ -1,8 +1,4 @@
 import { v2 as cloudinary } from 'cloudinary';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
 // Validate required environment variables
 const requiredEnvVars = [
   'CLOUDINARY_CLOUD_NAME',
@@ -11,8 +7,9 @@ const requiredEnvVars = [
 ];
 
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+// Warn instead of throwing so the API still boots (uploads will fail until configured)
 if (missingVars.length > 0) {
-  throw new Error(`Missing required Cloudinary environment variables: ${missingVars.join(', ')}`);
+  console.warn(`Cloudinary is not configured. Missing environment variables: ${missingVars.join(', ')}`);
 }
 
 // Configure Cloudinary with optimizations
@@ -191,22 +188,11 @@ export const deleteMultipleImages = async (
     for (let i = 0; i < publicIds.length; i += batchSize) {
       const batch = publicIds.slice(i, i + batchSize);
       const result = await cloudinary.api.delete_resources(batch, {
+        invalidate: true, // purge CDN cache as part of the delete
         ...options,
         type: 'upload',
         resource_type: 'image'
       });
-      
-      // Invalidate CDN cache for the batch
-      if (options.invalidate !== false) {
-        await Promise.all(
-          batch.map(id => 
-            cloudinary.uploader.explicit(id, { 
-              type: 'upload',
-              invalidate: true 
-            }).catch(console.error)
-          )
-        );
-      }
       
       results.push(result);
     }

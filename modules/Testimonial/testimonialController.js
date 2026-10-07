@@ -8,14 +8,14 @@ export const addTestimonial = asyncHandler(async (req, res, next) => {
     return next(new AppError("الاسم والرأي والنوع مطلوبين", 400));
   }
   
-  // Auto-approve agency testimonials
-  const status = type === "agency" ? "approved" : "pending";
+  // Every new testimonial waits for admin review
+  const status = "pending";
   
   const testimonial = await Testimonial.create({
     name,
     text,
-    image,
-    role,
+    image: image || "",
+    ...(role && { role }),
     type,
     status, // Set status here
     propertyId: type === "property" ? propertyId : null,
@@ -34,14 +34,36 @@ export const addTestimonial = asyncHandler(async (req, res, next) => {
   });
 });
 
-// جلب الآراء مع فلترة
+const VALID_STATUSES = ["pending", "approved", "rejected"];
+const VALID_TYPES = ["general", "property", "agency"];
+const isObjectId = (value) => typeof value === "string" && /^[0-9a-fA-F]{24}$/.test(value);
+
+const buildTestimonialFilter = (query, allowAnyStatus) => {
+  const { status, type, propertyId, agencyId } = query;
+  const filter = {};
+  if (allowAnyStatus) {
+    if (VALID_STATUSES.includes(status)) filter.status = status;
+  } else {
+    // Public visitors only ever see approved testimonials
+    filter.status = "approved";
+  }
+  if (VALID_TYPES.includes(type)) filter.type = type;
+  if (isObjectId(propertyId)) filter.propertyId = propertyId;
+  if (isObjectId(agencyId)) filter.agencyId = agencyId;
+  return filter;
+};
+
+// جلب الآراء مع فلترة (المعتمدة فقط، إلا لو الطالب أدمن ومرر status)
 export const getTestimonials = asyncHandler(async (req, res, next) => {
-  const { status, type, propertyId, agencyId } = req.query;
-  let filter = {};
-  if (status) filter.status = status;
-  if (type) filter.type = type;
-  if (propertyId) filter.propertyId = propertyId;
-  if (agencyId) filter.agencyId = agencyId;
+  const isAdmin = req.user?.role === "admin";
+  const filter = buildTestimonialFilter(req.query, isAdmin && !!req.query.status);
+  const testimonials = await Testimonial.find(filter).sort({ createdAt: -1 });
+  res.status(200).json({ success: true, data: testimonials });
+});
+
+// كل الآراء لأي حالة (أدمن فقط)
+export const getAllTestimonials = asyncHandler(async (req, res, next) => {
+  const filter = buildTestimonialFilter(req.query, true);
   const testimonials = await Testimonial.find(filter).sort({ createdAt: -1 });
   res.status(200).json({ success: true, data: testimonials });
 });
@@ -50,7 +72,7 @@ export const getTestimonials = asyncHandler(async (req, res, next) => {
 export const updateTestimonialStatus = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { status } = req.body;
-  if (!['approved', 'rejected'].includes(status)) {
+  if (!VALID_STATUSES.includes(status)) {
     return next(new AppError("الحالة غير صحيحة", 400));
   }
   const testimonial = await Testimonial.findByIdAndUpdate(

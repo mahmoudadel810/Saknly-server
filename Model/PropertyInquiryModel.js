@@ -20,7 +20,7 @@ const PropertyInquirySchema = new mongoose.Schema({
         trim: true,
         lowercase: true,
         match: [
-            /^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/,
+            /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
             'Please provide a valid email address'
         ]
     },

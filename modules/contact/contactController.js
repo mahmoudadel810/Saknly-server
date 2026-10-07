@@ -1,6 +1,5 @@
 import ContactUs from "../../Model/ContactModel.js";
 import { asyncHandler, AppError } from "../../middelWares/errorMiddleware.js";
-import { validation } from '../../middelWares/validation.js';
 
 //=========================Submit Contact Form====================================
 export const submitContactForm = asyncHandler(async (req, res, next) =>
@@ -12,6 +11,7 @@ export const submitContactForm = asyncHandler(async (req, res, next) =>
         return next(new AppError("All fields are required", 400));
     }
 
+    // status is server-controlled (always starts as pending)
     const newContact = await ContactUs.create({
         name,
         email,

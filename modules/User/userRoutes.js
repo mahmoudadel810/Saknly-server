@@ -1,16 +1,13 @@
 import { Router } from "express";
 import * as userController from './userController.js';
-import { registerUserValidator, updateUserValidator, deleteUserValidator } from './userValidation.js';
+import { updateUserValidator, deleteUserValidator } from './userValidation.js';
 import { protect, admin } from '../../middelWares/authMiddleware.js';
 import { validation } from '../../middelWares/validation.js';
 
 const router = Router();
 
-// Public routes
-router.post('/register', validation(registerUserValidator), userController.registerUser);
-
-// Admin only routes
-router.get('/get-all-users', userController.getUsers);
+// Admin only routes (registration lives in POST /auth/register)
+router.get('/get-all-users', protect, admin, userController.getUsers);
 router.get('/get-user/:id', protect, admin, userController.getUserById);
 router.put('/update-user/:id', protect, admin, validation(updateUserValidator), userController.updateUser);
 router.delete('/delete-user/:id', protect, admin, validation(deleteUserValidator), userController.deleteUser);

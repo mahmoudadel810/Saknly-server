@@ -11,7 +11,7 @@ const router = Router();
 router.post('/contact-us', validation(contactValidator), contactController.submitContactForm);
 
 // Admin only routes
-router.get('/get-all-contacts', contactController.getContacts);
+router.get('/get-all-contacts', protect, admin, contactController.getContacts);
 
 router.put('/update-contact-status/:id',
     protect,
@@ -21,6 +21,8 @@ router.put('/update-contact-status/:id',
 );
 
 router.delete('/delete-contact/:id',
+    protect,
+    admin,
     validation(deleteContactValidator),
     contactController.deleteContact
 );

@@ -1,12 +1,14 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
-// In-memory token blacklist (can be replaced with Redis for production)
+// In-memory token blacklist: only a fast path for the instance that handled the logout.
+// The authoritative logout check is User.lastLogoutAt in the protect middleware (works across instances).
 const tokenBlacklist = new Set();
 
 export const tokenFunction = ({
     payload = {},
     secret = process.env.JWT_SECRET,
-    expiresIn = process.env.JWT_EXPIRES_IN,
+    expiresIn = process.env.JWT_EXPIRES_IN || '1d',
     generate = true
 }) =>
 {
@@ -20,7 +22,8 @@ export const tokenFunction = ({
     {
         if (Object.keys(payload).length > 0)
         {
-            const token = jwt.sign(payload, secret, { expiresIn });
+            // jwtid makes every token unique (two logins in the same second must not share a blacklisted string)
+            const token = jwt.sign(payload, secret, { expiresIn, jwtid: crypto.randomUUID() });
             return token;
         }
         return false;
@@ -70,16 +73,16 @@ export const blacklistToken = (token) =>
         const timeToExpiry = expiryTimestamp - Date.now();
         if (timeToExpiry > 0)
         {
-            setTimeout(() =>
+            const timer = setTimeout(() =>
             {
                 tokenBlacklist.delete(token);
-            }, timeToExpiry + 10000); // Add 10 seconds buffer
+            }, Math.min(timeToExpiry + 10000, 2147483647)); // Add 10 seconds buffer (capped to setTimeout max)
+            timer.unref?.();
         }
 
         return true;
     } catch (error)
     {
-        console.error('Error blacklisting token:', error);
         return false;
     }
 };

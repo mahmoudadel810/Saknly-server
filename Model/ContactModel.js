@@ -12,7 +12,7 @@ const contactUsSchema = new mongoose.Schema({
         type: String,
         required: [true, 'Email is required'],
         match: [
-            /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+            /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
             'Please enter a valid email',
         ],
     },

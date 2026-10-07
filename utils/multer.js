@@ -1,39 +1,55 @@
 import multer from 'multer';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import { v2 as cloudinary } from 'cloudinary';
+import cloudinary from '../services/cloudinary.js';
 import { AppError } from '../middelWares/errorMiddleware.js';
 import sharp from 'sharp';
-import { promisify } from 'util';
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true,
-});
+// Note: Vercel serverless functions reject request bodies larger than ~4.5MB in total
+// (all files + fields), regardless of the per-file limit below. The client compresses
+// images before upload; very large multi-image uploads will get a 413 from the platform.
 
-// Enable memory storage for processing
-const memoryStorage = multer.memoryStorage();
-
-// Process image with sharp - more aggressive compression for Vercel
+// Process image with sharp - aggressive compression for Vercel
 const processImage = async (buffer) => {
   return sharp(buffer)
+    .rotate() // apply EXIF orientation, then metadata (incl. GPS) is dropped
     .resize({
-      width: 800, // Reduced from 1200
-      height: 600, // Reduced from 800
+      width: 800,
+      height: 600,
       fit: 'inside',
       withoutEnlargement: true,
     })
     .jpeg({ 
-      quality: 70, // Reduced from 80
+      quality: 70,
       progressive: true,
       optimizeScans: true,
-      mozjpeg: true // Better compression
+      mozjpeg: true
     })
-    .withMetadata()
     .toBuffer();
 };
+
+// Multer custom storage engines receive file.stream (not file.buffer) - read it fully
+const streamToBuffer = (stream) => new Promise((resolve, reject) => {
+  const chunks = [];
+  stream.on('data', (chunk) => chunks.push(chunk));
+  stream.on('error', reject);
+  stream.on('end', () => resolve(Buffer.concat(chunks)));
+});
+
+const uploadBufferToCloudinary = (buffer, folder) => new Promise((resolve, reject) => {
+  const uploadStream = cloudinary.uploader.upload_stream(
+    {
+      folder,
+      resource_type: 'auto',
+      quality: 'auto:low',
+      fetch_format: 'auto',
+    },
+    (error, result) => {
+      if (error) return reject(error);
+      resolve(result);
+    }
+  );
+
+  uploadStream.end(buffer);
+});
 
 export const allowedMimeTypes = {
   image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'],
@@ -51,43 +67,27 @@ export const allowedMimeTypes = {
   ],
 };
 
-// Create optimized storage engine
+// Storage engine: buffer the stream, compress images, upload to Cloudinary.
+// Result fields merged onto req.file / req.files[i]: path (secure_url), public_id, format, bytes, width, height
 const createOptimizedStorage = (folder = 'saknly') => {
   return {
     _handleFile: async (req, file, cb) => {
       try {
-        // Process only images
-        if (file.mimetype.startsWith('image/')) {
-          const processedBuffer = await processImage(file.buffer);
-          file.buffer = processedBuffer;
+        let buffer = await streamToBuffer(file.stream);
+
+        // Process only still images (sharp can't handle animated gifs well, keep them as-is)
+        if (file.mimetype.startsWith('image/') && file.mimetype !== 'image/gif') {
+          buffer = await processImage(buffer);
         }
-        
-        const uploadResult = await new Promise((resolve, reject) => {
-          const uploadStream = cloudinary.uploader.upload_stream(
-            {
-              folder,
-              resource_type: 'auto',
-              quality: 'auto:low', // More aggressive compression
-              fetch_format: 'auto',
-              eager: [
-                { width: 600, crop: 'scale' }, // Reduced sizes
-                { width: 300, crop: 'scale' }
-              ]
-            },
-            (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            }
-          );
-          
-          uploadStream.end(file.buffer);
-        });
-        
+
+        const uploadResult = await uploadBufferToCloudinary(buffer, folder);
+
         cb(null, {
           path: uploadResult.secure_url,
           public_id: uploadResult.public_id,
           format: uploadResult.format,
           bytes: uploadResult.bytes,
+          size: uploadResult.bytes,
           width: uploadResult.width,
           height: uploadResult.height
         });
@@ -98,7 +98,7 @@ const createOptimizedStorage = (folder = 'saknly') => {
     
     _removeFile: (req, file, cb) => {
       if (file.public_id) {
-        cloudinary.uploader.destroy(file.public_id);
+        Promise.resolve(cloudinary.uploader.destroy(file.public_id)).catch(() => { });
       }
       cb(null);
     }
@@ -106,21 +106,11 @@ const createOptimizedStorage = (folder = 'saknly') => {
 };
 
 export function createUploader(customValidation = allowedMimeTypes.image) {
-  // Create file filter with better error handling
   const fileFilter = (req, file, cb) => {
-    console.log('=== MULTER FILE FILTER ===');
-    console.log('File fieldname:', file.fieldname);
-    console.log('File mimetype:', file.mimetype);
-    console.log('File originalname:', file.originalname);
-    console.log('Expected fieldname: images');
-    console.log('Allowed mimetypes:', customValidation);
-    
     if (customValidation.includes(file.mimetype)) {
-      console.log('File type accepted');
       return cb(null, true);
     }
-    
-    console.log('File type rejected');
+
     const error = new AppError(
       `Invalid file type. Allowed types: ${customValidation.join(', ')}`,
       400
@@ -128,31 +118,15 @@ export function createUploader(customValidation = allowedMimeTypes.image) {
     return cb(error, false);
   };
 
-  // Create multer instance with Vercel-optimized settings
-  const multerInstance = multer({
+  return multer({
     storage: createOptimizedStorage(),
     fileFilter,
     limits: {
-      fileSize: 4 * 1024 * 1024, // 4MB limit (under Vercel's 4.5MB limit)
-      files: 8, // Reduced from 10 to 8 files
-      fieldSize: 2 * 1024 * 1024, // 2MB for text fields
-    },
-    preservePath: true
-  });
-  
-  console.log('=== MULTER INSTANCE CREATED ===');
-  console.log('Multer configuration:', {
-    storage: 'createOptimizedStorage',
-    fileFilter: 'custom fileFilter',
-    limits: {
-      fileSize: '4MB',
+      fileSize: 4 * 1024 * 1024, // 4MB per file (Vercel caps the whole body at ~4.5MB)
       files: 8,
-      fieldSize: '2MB'
+      fieldSize: 1 * 1024 * 1024, // 1MB for text fields
     },
-    preservePath: true
   });
-  
-  return multerInstance;
 }
 
 // Export the default uploader with image validation
@@ -171,13 +145,15 @@ export const uploadAll = createUploader([
 
 // Helper function to clean up uploaded files on error
 export const cleanupUploads = (req) => {
-  if (!req.files) return;
-  
-  const files = Array.isArray(req.files) ? req.files : Object.values(req.files).flat();
-  
+  const files = [];
+  if (req.file) files.push(req.file);
+  if (req.files) {
+    files.push(...(Array.isArray(req.files) ? req.files : Object.values(req.files).flat()));
+  }
+
   files.forEach(file => {
     if (file.public_id) {
-      cloudinary.uploader.destroy(file.public_id).catch(console.error);
+      Promise.resolve(cloudinary.uploader.destroy(file.public_id)).catch(() => { });
     }
   });
 };

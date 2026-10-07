@@ -3,50 +3,28 @@ import { asyncHandler, AppError } from '../../middelWares/errorMiddleware.js';
 import { hashFunction, compareFunction } from '../../utils/passwordHashing.js';
 import sendEmail from '../../services/sendEmail.js';
 import { tokenFunction, blacklistToken } from '../../utils/tokenFunction.js';
+import { getTokenFromHeader } from '../../middelWares/authMiddleware.js';
+import logger from '../../utils/logger.js';
 import { nanoid } from 'nanoid';
 
+//=========================helpers====================================
 
+// Front-end base URL (links in emails point to client pages)
+export const clientUrl = () => (process.env.CLIENT_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
 
+const isProduction = () => process.env.NODE_ENV === 'production';
 
+// Cross-site cookie (API and client are on different domains in production)
+const cookieOptions = () => ({
+    httpOnly: true,
+    secure: isProduction(),
+    sameSite: isProduction() ? 'none' : 'lax',
+    path: "/",
+});
 
+const RESET_CODE_TTL_MS = 15 * 60 * 1000;
 
-
-
-
-export const register = asyncHandler(async (req, res, next) => {
-    const { userName, email, password, confirmPassword, phone, address } = req.body;
-
-    if (!userName || !email || !password || !phone || !address) //check user inputs
-        return res.status(400).json({ message: "All fields are required" });
-
-    const checkUser = await userModel.findOne({ email });
-    if (checkUser)
-        return res.status(401).json({ message: "User exists , Or you are not confirmed yet" });
-
-    const hashedPassword = hashFunction({ payload: password });
-
-    const newUser = new userModel({
-        userName,
-        email,
-        password: hashedPassword,
-        phone,
-        address
-    });
-
-    const token = tokenFunction({
-        payload: { id: newUser._id, email: newUser.email },
-        generate: true
-    });
-
-
-
-
-    const confirmationLink = `${process.env.CLIENT_URL}/confirm-email/${token}`;
-
-    const Send = await sendEmail({
-        to: newUser.email,
-        subject: "Confirm your email",
-        message: `
+const confirmationEmailHtml = (userName, confirmationLink) => `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                 <div style="text-align: center; margin-bottom: 30px;">
                     <h1 style="color: #333; margin-bottom: 10px;">Welcome to Saknly!</h1>
@@ -56,7 +34,7 @@ export const register = asyncHandler(async (req, res, next) => {
                 <div style="background-color: #f8f9fa; padding: 25px; border-radius: 8px; margin-bottom: 25px;">
                     <h2 style="color: #333; margin-bottom: 15px;">Email Confirmation Required</h2>
                     <p style="color: #555; line-height: 1.6; margin-bottom: 20px;">
-                        Hi ${newUser.userName},
+                        Hi ${userName},
                     </p>
                     <p style="color: #555; line-height: 1.6; margin-bottom: 20px;">
                         Thank you for registering with Saknly! To complete your registration and start exploring properties, 
@@ -91,152 +69,9 @@ export const register = asyncHandler(async (req, res, next) => {
                     </p>
                 </div>
             </div>
-        `
-    });
+        `;
 
-    if (!Send) {
-        return next(new AppError("Failed to send email", 500));
-    }
-    await newUser.save();//maybe u move it to the confirmation step
-    res.status(201).json({
-        success: true,
-        message: "User registered successfully. Please verify your email.",
-        data: {
-            _id: newUser._id,
-            userName: newUser.userName,
-            email: newUser.email,
-        },
-    });
-});
-
-//=========================Confirmation Email=========================
-
-export const confirmEmail = asyncHandler(async (req, res, next) => {
-    const { token } = req.params;
-
-    const decoded = tokenFunction({ payload: token, generate: false });
-
-    if (!decoded?.id) {
-        return next(new AppError("Invalid token", 400));
-    }
-
-
-    const userConfirm = await userModel.findOneAndUpdate(
-        { _id: decoded.id, isConfirmed: false },
-        {
-            $set: {
-                isConfirmed: true,
-                status: 'active'
-            }
-        },
-        { new: true }
-    );
-
-
-    if (!userConfirm) {
-        return res.status(400).json({
-            success: false,
-            message: "Email already confirmed or user not found"
-        });
-    }
-    res.status(200).json({
-        success: true,
-        message: "Email confirmed successfully , you can now log in"
-    });
-});
-
-//=========================Login====================================
-
-export const login = asyncHandler(async (req, res, next) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-        return next(new AppError("Email and password are required", 400));
-    }
-    const user = await userModel.findOne({ email, isConfirmed: true }).select('+password');
-    if (!user) {
-        return next(new AppError("User not found , Or you are not confirmed yet", 404));
-    }
-    const isPasswordCorrect = compareFunction({ payload: password, referenceData: user.password });
-
-    if (!isPasswordCorrect) {
-        return next(new AppError("Email or password are not correct", 400));
-    }
-    const token = tokenFunction({
-        payload: {
-            id: user._id,
-            email: user.email,
-            userName: user.userName,
-            role: user.role
-        }
-    });
-    if (!token) {
-        return next(new AppError("Failed to generate token", 500));
-    }
-
-    res.cookie("token", token, {
-        httpOnly: true,
-        secure: false, // لازم تبقى false في development
-        sameSite: "strict",
-        maxAge: 24 * 60 * 60 * 1000,
-        path: "/",
-    });
-
-    await userModel.findOneAndUpdate(
-        { email: email },
-        { $set: { isLoggedIn: true, lastLoginAt: new Date(), status: 'active' } },
-        { new: true }
-    );
-    res.status(200).json({
-        success: true,
-        message: "Login successful",
-        token: token,
-        user: {
-            _id: user._id,
-            userName: user.userName,
-            email: user.email,
-            role: user.role
-        }
-    });
-});
-
-
-
-//========================getMe====================================
-export const getMe = asyncHandler(async (req, res, next) => {
-    const userId = req.user.id;
-
-    const user = await userModel.findById(userId);
-    if (!user) {
-        return next(new AppError("User not found", 404));
-    }
-    res.status(200).json({
-        success: true,
-        message: "User found",
-        data: {
-            user: user
-        }
-    });
-});
-
-
-//=========================forgotPassword====================================
-//take the mail from user and send him a code to reset his password
-export const forgotPassword = asyncHandler(async (req, res, next) => {
-    const { email } = req.body;
-
-    const user = await userModel.findOne({ email });
-    if (!user) {
-        return next(new AppError('No user found with this email address', 404));
-    }
-
-    const resetPasswordToken = nanoid(6);
-    // Set token expiration time to 15 minutes from now
-    const tokenExpiration = new Date(Date.now() + 15 * 60 * 1000);
-
-    const emailed = await sendEmail({
-        to: email,
-        subject: 'Reset your Password',
-        message: `
+const resetCodeEmailHtml = (resetPasswordToken) => `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                 <div style="text-align: center; margin-bottom: 30px;">
                     <h1 style="color: #333; margin-bottom: 10px;">Password Reset Request</h1>
@@ -279,74 +114,9 @@ export const forgotPassword = asyncHandler(async (req, res, next) => {
                     </p>
                 </div>
             </div>
-        `
-    });
+        `;
 
-    if (!emailed) {
-        return next(new AppError('Failed to send password reset email. Please try again later.', 503));
-    }
-
-    try {
-        user.resetPasswordToken = resetPasswordToken;
-        user.resetPasswordExpires = tokenExpiration;
-        await user.save();
-    } catch (saveError) {
-        console.log("Failed to save reset password token to user, but email was sent:", saveError);
-        // Continue execution as email was sent successfully
-    }
-
-    res.status(200).json({
-        success: true,
-        message: 'Password reset code sent successfully to your email.'
-    });
-});
-
-//=========================resetPassword====================================
-//virify that the code is correct and then update the password
-export const resetPassword = asyncHandler(async (req, res, next) => {
-    const { code, newPassword, confirmNewPassword } = req.body;
-
-    if (!code || !newPassword || !confirmNewPassword) {
-        return next(new AppError('code, new password, and confirm password are required', 400));
-    }
-
-    const user = await userModel.findOne({
-        resetPasswordToken: code
-    });
-
-    if (!user) {
-        return next(new AppError('Invalid email or reset code', 400));
-    }
-
-    // Check if token الكود مش التوكن الرئيسي has expired
-    if (user.resetPasswordExpires && user.resetPasswordExpires < Date.now()) {
-        return next(new AppError('Reset code has expired. Please request a new password reset.', 400));
-    }
-
-    // Hash the new password
-    const hashedPassword = hashFunction({ payload: newPassword });
-
-    // Store the original email for the notification
-    const userEmail = user.email;
-
-    // Update user password and clear the reset token
-    await userModel.findByIdAndUpdate(
-        user._id,
-        {
-            $set: {
-                password: hashedPassword,
-                resetPasswordToken: nanoid(),
-                resetPasswordExpires: null
-            }
-        },
-        { new: true }
-    );
-
-    // Send confirmation email that password was changed
-    await sendEmail({
-        to: userEmail,
-        subject: 'Your Password Has Been Changed',
-        message: `
+const passwordChangedEmailHtml = () => `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                 <div style="text-align: center; margin-bottom: 30px;">
                     <h1 style="color: #333; margin-bottom: 10px;">Password Change Confirmation</h1>
@@ -367,7 +137,7 @@ export const resetPassword = asyncHandler(async (req, res, next) => {
                     </div>
                     
                     <div style="text-align: center; margin: 20px 0;">
-                        <a href="${process.env.CLIENT_URL}/resetPassword" style="background-color: #0275d8; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Reset My Password</a>
+                        <a href="${clientUrl()}/resetPassword" style="background-color: #0275d8; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Reset My Password</a>
                     </div>
                     
                     <p style="color: #555; line-height: 1.6; margin-bottom: 20px;">
@@ -386,7 +156,323 @@ export const resetPassword = asyncHandler(async (req, res, next) => {
                     </p>
                 </div>
             </div>
-        `
+        `;
+
+// Never throws: returns true when the email was accepted by the mail server
+const trySendEmail = async (options) =>
+{
+    try
+    {
+        return await sendEmail(options);
+    }
+    catch (error)
+    {
+        logger.error(`Email to recipient failed (${options.subject}): ${error.message}`);
+        return false;
+    }
+};
+
+// Confirmation link targets the client page /confirm-email/<token>, which calls GET /auth/confirm-email/:token
+const sendConfirmationEmail = async (user) =>
+{
+    const token = tokenFunction({
+        payload: { id: user._id, email: user.email },
+        expiresIn: '24h',
+        generate: true
+    });
+
+    const confirmationLink = `${clientUrl()}/confirm-email/${token}`;
+
+    return trySendEmail({
+        to: user.email,
+        subject: "Confirm your email",
+        message: confirmationEmailHtml(user.userName, confirmationLink)
+    });
+};
+
+//=========================Register====================================
+
+export const register = asyncHandler(async (req, res, next) => {
+    const { userName, firstName, lastName, email, password, phone, address } = req.body;
+
+    if (!userName || !email || !password || !phone || !address) //check user inputs
+        return res.status(400).json({ message: "All fields are required" });
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    const checkUser = await userModel.findOne({ email: normalizedEmail });
+    if (checkUser)
+    {
+        if (checkUser.isConfirmed || checkUser.provider !== 'local')
+            return next(new AppError("This email is already registered", 409));
+
+        // An unconfirmed account is replaced (new _id, so old confirmation links stop working)
+        await userModel.deleteOne({ _id: checkUser._id, isConfirmed: false });
+    }
+
+    const hashedPassword = hashFunction({ payload: password });
+
+    const newUser = await userModel.create({
+        userName,
+        ...(firstName && { firstName }),
+        ...(lastName && { lastName }),
+        email: normalizedEmail,
+        password: hashedPassword,
+        phone,
+        address
+    });
+
+    // The account exists even if the email fails; the user can request a new link
+    const emailSent = await sendConfirmationEmail(newUser);
+
+    res.status(201).json({
+        success: true,
+        message: emailSent
+            ? "User registered successfully. Please verify your email."
+            : "User registered, but the confirmation email could not be sent. Please use 'resend confirmation' to get a new link.",
+        emailSent,
+        data: {
+            _id: newUser._id,
+            userName: newUser.userName,
+            email: newUser.email,
+        },
+    });
+});
+
+//=========================Resend confirmation email=========================
+
+export const resendConfirmation = asyncHandler(async (req, res, next) => {
+    const normalizedEmail = String(req.body.email || '').toLowerCase().trim();
+
+    const user = await userModel.findOne({ email: normalizedEmail, isConfirmed: false, provider: 'local' });
+    if (user)
+    {
+        await sendConfirmationEmail(user);
+    }
+
+    // Generic response: don't reveal whether the email is registered
+    res.status(200).json({
+        success: true,
+        message: "If this email belongs to an unconfirmed account, a new confirmation link has been sent."
+    });
+});
+
+//=========================Confirmation Email=========================
+
+export const confirmEmail = asyncHandler(async (req, res, next) => {
+    const { token } = req.params;
+
+    const decoded = tokenFunction({ payload: token, generate: false });
+
+    if (!decoded?.id) {
+        return next(new AppError("Invalid or expired confirmation link", 400));
+    }
+
+
+    const userConfirm = await userModel.findOneAndUpdate(
+        { _id: decoded.id, isConfirmed: false },
+        {
+            $set: {
+                isConfirmed: true,
+                status: 'active'
+            }
+        },
+        { new: true }
+    );
+
+
+    if (!userConfirm) {
+        return res.status(400).json({
+            success: false,
+            message: "Email already confirmed or user not found"
+        });
+    }
+    res.status(200).json({
+        success: true,
+        message: "Email confirmed successfully , you can now log in"
+    });
+});
+
+//=========================Login====================================
+
+export const login = asyncHandler(async (req, res, next) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return next(new AppError("Email and password are required", 400));
+    }
+
+    const user = await userModel.findOne({ email: String(email).toLowerCase().trim() }).select('+password');
+    if (!user) {
+        return next(new AppError("Email or password are not correct", 400));
+    }
+
+    // Google-only accounts have no password
+    if (!user.password) {
+        return next(new AppError("This account uses Google sign-in. Please log in with Google.", 400));
+    }
+
+    const isPasswordCorrect = compareFunction({ payload: password, referenceData: user.password });
+
+    if (!isPasswordCorrect) {
+        return next(new AppError("Email or password are not correct", 400));
+    }
+
+    if (!user.isConfirmed) {
+        return next(new AppError("Your email is not confirmed yet. Please confirm your email to log in.", 403));
+    }
+
+    if (user.status !== 'active') {
+        return next(new AppError("Account is inactive. Please contact support", 403));
+    }
+
+    const token = tokenFunction({
+        payload: {
+            id: user._id,
+            email: user.email,
+            userName: user.userName,
+            role: user.role
+        }
+    });
+    if (!token) {
+        return next(new AppError("Failed to generate token", 500));
+    }
+
+    res.cookie("token", token, {
+        ...cookieOptions(),
+        maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    await userModel.updateOne(
+        { _id: user._id },
+        { $set: { isLoggedIn: true, lastLoginAt: new Date() } }
+    );
+    res.status(200).json({
+        success: true,
+        message: "Login successful",
+        token: token,
+        user: {
+            _id: user._id,
+            userName: user.userName,
+            email: user.email,
+            role: user.role
+        }
+    });
+});
+
+
+
+//========================getMe====================================
+export const getMe = asyncHandler(async (req, res, next) => {
+    const userId = req.user.id;
+
+    const user = await userModel.findById(userId);
+    if (!user) {
+        return next(new AppError("User not found", 404));
+    }
+    res.status(200).json({
+        success: true,
+        message: "User found",
+        data: {
+            user: user
+        }
+    });
+});
+
+
+//=========================forgotPassword====================================
+//take the mail from user and send him a code to reset his password
+export const forgotPassword = asyncHandler(async (req, res, next) => {
+    const normalizedEmail = String(req.body.email || '').toLowerCase().trim();
+
+    const genericResponse = {
+        success: true,
+        message: 'If an account exists for this email, a password reset code has been sent.'
+    };
+
+    const user = await userModel.findOne({ email: normalizedEmail });
+    if (!user) {
+        // Same response as success so the endpoint can't be used to discover accounts
+        return res.status(200).json(genericResponse);
+    }
+
+    const resetPasswordToken = nanoid(6);
+
+    // Save first, then email; the code expires in 15 minutes
+    await userModel.updateOne(
+        { _id: user._id },
+        {
+            $set: {
+                resetPasswordToken,
+                resetPasswordTokenExpiresIn: new Date(Date.now() + RESET_CODE_TTL_MS)
+            }
+        }
+    );
+
+    const emailed = await trySendEmail({
+        to: user.email,
+        subject: 'Reset your Password',
+        message: resetCodeEmailHtml(resetPasswordToken)
+    });
+
+    if (!emailed) {
+        await userModel.updateOne(
+            { _id: user._id },
+            { $unset: { resetPasswordToken: 1, resetPasswordTokenExpiresIn: 1 } }
+        );
+        return next(new AppError('We could not send the password reset email right now. Please try again later.', 503));
+    }
+
+    res.status(200).json(genericResponse);
+});
+
+//=========================resetPassword====================================
+//verify that the email + code are correct and not expired, then update the password
+export const resetPassword = asyncHandler(async (req, res, next) => {
+    const { email, code, newPassword, confirmNewPassword } = req.body;
+
+    if (!email || !code || !newPassword || !confirmNewPassword) {
+        return next(new AppError('email, code, new password, and confirm password are required', 400));
+    }
+
+    const user = await userModel.findOne({
+        email: String(email).toLowerCase().trim(),
+        resetPasswordToken: String(code).trim()
+    }).select('+resetPasswordToken +resetPasswordTokenExpiresIn');
+
+    if (!user) {
+        return next(new AppError('Invalid email or reset code', 400));
+    }
+
+    // Check if the reset code has expired (a missing expiry counts as expired)
+    if (!user.resetPasswordTokenExpiresIn || user.resetPasswordTokenExpiresIn.getTime() < Date.now()) {
+        await userModel.updateOne(
+            { _id: user._id },
+            { $unset: { resetPasswordToken: 1, resetPasswordTokenExpiresIn: 1 } }
+        );
+        return next(new AppError('Reset code has expired. Please request a new password reset.', 400));
+    }
+
+    // Hash the new password
+    const hashedPassword = hashFunction({ payload: newPassword });
+
+    // Update the password, clear the code (single use) and end existing sessions
+    await userModel.updateOne(
+        { _id: user._id, resetPasswordToken: user.resetPasswordToken },
+        {
+            $set: {
+                password: hashedPassword,
+                // revokes tokens issued before the reset (isLoggedIn is only changed by login/logout)
+                lastLogoutAt: new Date()
+            },
+            $unset: { resetPasswordToken: 1, resetPasswordTokenExpiresIn: 1 }
+        }
+    );
+
+    // Notification is best effort: a mail failure must not turn the reset into an error
+    await trySendEmail({
+        to: user.email,
+        subject: 'Your Password Has Been Changed',
+        message: passwordChangedEmailHtml()
     });
 
     res.status(200).json({
@@ -397,75 +483,72 @@ export const resetPassword = asyncHandler(async (req, res, next) => {
 
 //=========================refreshToken====================================
 export const refreshToken = asyncHandler(async (req, res, next) => {
-    const oldToken = req.headers.authorization?.split(process.env.BEARER_KEY)[1];
+    const oldToken = getTokenFromHeader(req);
 
     if (!oldToken) {
         return next(new AppError('Token is required', 401));
     }
 
-    try {
-        // Verify old token and get payload
-        const decoded = tokenFunction({
-            payload: oldToken,
-            generate: false
-        });
+    // Verify old token and get payload
+    const decoded = tokenFunction({
+        payload: oldToken,
+        generate: false
+    });
 
-        if (!decoded?.id) {
-            return next(new AppError('Invalid token', 401));
-        }
-
-        // Find user by ID from token
-        const user = await userModel.findById(decoded.id);
-        if (!user || !user.isConfirmed || !user.isLoggedIn) {
-            return next(new AppError('User not found or not authorized', 401));
-        }
-
-        // Generate new token with fresh expiry
-        const newToken = tokenFunction({
-            payload: {
-                id: user._id,
-                email: user.email,
-                userName: user.userName,
-                role: user.role
-            }
-        });
-
-        if (!newToken) {
-            return next(new AppError('Failed to generate new token', 500));
-        }
-
-        res.status(200).json({
-            success: true,
-            message: 'Token refreshed successfully',
-            token: newToken,
-            user: {
-                _id: user._id,
-                userName: user.userName,
-                email: user.email,
-                role: user.role
-            }
-        });
+    if (!decoded?.id) {
+        return next(new AppError('Invalid token', 401));
     }
-    catch (error) {
-        return next(new AppError('Invalid or expired token', 401));
+
+    // Find user by ID from token
+    const user = await userModel.findById(decoded.id);
+    if (!user || !user.isConfirmed || !user.isLoggedIn || user.status !== 'active') {
+        return next(new AppError('User not found or not authorized', 401));
     }
+
+    // Tokens issued before the last logout can't be refreshed
+    if (user.lastLogoutAt && decoded.iat < Math.floor(user.lastLogoutAt.getTime() / 1000)) {
+        return next(new AppError('Session has ended. Please log in again', 401));
+    }
+
+    // Generate new token with fresh expiry
+    const newToken = tokenFunction({
+        payload: {
+            id: user._id,
+            email: user.email,
+            userName: user.userName,
+            role: user.role
+        }
+    });
+
+    if (!newToken) {
+        return next(new AppError('Failed to generate new token', 500));
+    }
+
+    res.status(200).json({
+        success: true,
+        message: 'Token refreshed successfully',
+        token: newToken,
+        user: {
+            _id: user._id,
+            userName: user.userName,
+            email: user.email,
+            role: user.role
+        }
+    });
 });
 
 
 //=========================logOut====================================
 export const logOut = asyncHandler(async (req, res, next) => {
     const userId = req.user.id;
-    const token = req.headers.authorization?.split(process.env.BEARER_KEY)[1];
+    const token = getTokenFromHeader(req);
 
     if (!userId) {
         return next(new AppError('User ID is required', 400));
     }
 
-    // Blacklist the current token
-    const tokenBlacklisted = blacklistToken(token);
-    if (!tokenBlacklisted) {
-        console.log('Failed to blacklist token during logout');
-    }
+    // Fast path for this instance; lastLogoutAt below revokes the token everywhere
+    blacklistToken(token);
 
     const user = await userModel.findByIdAndUpdate(
         userId,
@@ -482,12 +565,7 @@ export const logOut = asyncHandler(async (req, res, next) => {
         return next(new AppError('User not found', 404));
     }
 
-    res.clearCookie("token", {
-        httpOnly: true,
-        secure: false, // لازم تبقى برضه false
-        sameSite: "strict",
-        path: "/", // لازم يكون مطابق للمسار اللي حطيتي فيه الكوكي
-    });
+    res.clearCookie("token", cookieOptions());
 
 
     res.status(200).json({
@@ -495,4 +573,3 @@ export const logOut = asyncHandler(async (req, res, next) => {
         message: 'Logged out successfully'
     });
 });
-

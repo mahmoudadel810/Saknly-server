@@ -1,18 +1,29 @@
 import express from 'express';
 import { smartAskWithRAG } from './rag.service.js';
+import { chatLimiter } from '../../utils/rateLimiter.js';
+import logger from '../../utils/logger.js';
 
 
 const router = express.Router();
 
-router.post('/', async (req, res) => {
-    const { question } = req.body;
+router.post('/', chatLimiter, async (req, res) =>
+{
+    const { question } = req.body || {};
 
-    try {
-        const answer = await smartAskWithRAG(question);
+    if (typeof question !== 'string' || question.trim().length < 1 || question.length > 500)
+    {
+        return res.status(400).json({ success: false, message: 'السؤال مطلوب ويجب ألا يزيد عن 500 حرف' });
+    }
+
+    try
+    {
+        const answer = await smartAskWithRAG(question.trim());
         res.json({ answer });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'حدث خطأ أثناء معالجة السؤال' });
+    }
+    catch (err)
+    {
+        logger.error(`Chatbot failed: ${err.message}`);
+        res.status(503).json({ success: false, message: 'المساعد الذكي غير متاح حالياً، حاول مرة أخرى لاحقاً' });
     }
 });
 

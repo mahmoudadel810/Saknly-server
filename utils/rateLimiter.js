@@ -4,9 +4,16 @@ import logger from './logger.js';
 // Store for tracking request counts
 const requestStore = new Map();
 
+// Parse a positive integer env value; anything else (unset, "15 * 60 * 1000", "abc") falls back to the default
+const parsePositiveInt = (value, fallback) =>
+{
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
+
 // Default rate limit configuration
-const DEFAULT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS);
-const DEFAULT_MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS);
+const DEFAULT_WINDOW_MS = parsePositiveInt(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000);
+const DEFAULT_MAX_REQUESTS = parsePositiveInt(process.env.RATE_LIMIT_MAX_REQUESTS, 100);
 
 // Different rate limit configurations for different routes
 export const rateLimitConfig = {
@@ -14,25 +21,31 @@ export const rateLimitConfig = {
     api: {
         windowMs: DEFAULT_WINDOW_MS,
         max: DEFAULT_MAX_REQUESTS,
-        message: 'Too many requests from this IP, please try again after 15 minutes',
+        message: 'Too many requests from this IP, please try again later',
     },
     // Stricter limit for authentication routes
     auth: {
         windowMs: DEFAULT_WINDOW_MS,
-        max: 5, // 5 requests per hour
-        message: 'Too many login attempts, please try again after an hour',
+        max: 10,
+        message: 'Too many login attempts, please try again later',
     },
     // Stricter limit for password reset
     passwordReset: {
         windowMs: DEFAULT_WINDOW_MS,
-        max: 3,
-        message: 'Too many password reset attempts, please try again after an hour',
+        max: 5,
+        message: 'Too many password reset attempts, please try again later',
     },
     // Stricter limit for file uploads
     fileUpload: {
         windowMs: DEFAULT_WINDOW_MS,
         max: 20,
-        message: 'Too many file uploads, please try again after an hour',
+        message: 'Too many file uploads, please try again later',
+    },
+    // Chatbot (each question may call Gemini)
+    chat: {
+        windowMs: DEFAULT_WINDOW_MS,
+        max: 30,
+        message: 'Too many chat requests, please try again later',
     }
 };
 
@@ -48,6 +61,8 @@ const cleanupInterval = setInterval(() =>
         }
     }
 }, 60000); //  every minute
+// Don't keep the process (or a serverless instance / import smoke test) alive just for cleanup
+cleanupInterval.unref?.();
 
 
 
@@ -129,6 +144,7 @@ export const apiLimiter = rateLimiter('api');
 export const authLimiter = rateLimiter('auth');
 export const passwordResetLimiter = rateLimiter('passwordReset');
 export const fileUploadLimiter = rateLimiter('fileUpload');
+export const chatLimiter = rateLimiter('chat');
 
 // Export cleanup function for testing or graceful shutdown
 export const cleanupRateLimiter = () =>

@@ -23,9 +23,7 @@ const testimonialSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],
-      default: function() {
-        return this.type === 'general' ? 'approved' : 'pending';
-      },
+      default: "pending",
     },
     type: {
       type: String,

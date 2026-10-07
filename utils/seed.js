@@ -1,199 +1,420 @@
+// Demo data for Saknly (Menoufia area, Arabic content).
+//
+//   npm run seed            -> seeds an EMPTY database (refuses if data exists)
+//   npm run seed -- --reset -> wipes the Saknly collections and re-seeds
+//
+// Passwords: SEED_ADMIN_PASSWORD / SEED_DEMO_PASSWORD, otherwise strong random ones are generated and printed once.
+import './loadEnv.js'; // must stay the first import
+import crypto from 'crypto';
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
 
-// =================================================================
-// 1. استيراد المودلز
-// =================================================================
 import User from '../Model/UserModel.js';
 import Agency from '../Model/AgencyModel.js';
-import Property from '../Model/PropertyModel.js';
+import Property, { PROPERTY_TYPES, CITIES, AMENITIES } from '../Model/PropertyModel.js';
 import Comment from '../Model/CommentModel.js';
 import PropertyInquiry from '../Model/PropertyInquiryModel.js';
 import ContactUs from '../Model/ContactModel.js';
 import Testimonial from '../Model/TestimonialModel.js';
+import { hashFunction } from './passwordHashing.js';
 
-// =================================================================
-// 2. إعداد الاتصال بقاعدة البيانات
-// =================================================================
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, '..', 'config', '.env') });
+const RESET = process.argv.includes('--reset');
+const EMAIL_DOMAIN = 'saknly.example.com';
 
-const MONGO_URI = process.env.MONGODB_URI;
+// Same rules as POST /auth/register: 5-30 chars, 1 uppercase, 1 digit, 1 symbol
+const PASSWORD_RULE = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{5,30}$/;
 
-const connectDB = async () => {
-    try {
-        await mongoose.connect(MONGO_URI);
-        console.log('>>> تم الاتصال بقاعدة البيانات بنجاح...');
-    } catch (err) {
-        console.error('XXX فشل الاتصال بقاعدة البيانات:', err.message);
+const generatePassword = () =>
+{
+    const symbols = '!@#$%^&*';
+    const body = crypto.randomBytes(12).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+    const symbol = symbols[crypto.randomInt(symbols.length)];
+    return `${body}${String.fromCharCode(65 + crypto.randomInt(26))}${crypto.randomInt(10)}${symbol}`;
+};
+
+const resolvePassword = (envName) =>
+{
+    const fromEnv = process.env[envName];
+    if (fromEnv)
+    {
+        if (!PASSWORD_RULE.test(fromEnv))
+        {
+            throw new Error(`${envName} does not meet the password rules (5-30 chars, 1 uppercase, 1 digit, 1 symbol)`);
+        }
+        return { value: fromEnv, generated: false };
+    }
+    return { value: generatePassword(), generated: true };
+};
+
+const id = () => new mongoose.Types.ObjectId();
+
+// Stable public demo images (res.cloudinary.com is already allowed in the client's next.config.mjs)
+const DEMO_IMAGE_BASE = 'https://res.cloudinary.com/demo/image/upload';
+const PROPERTY_IMAGES = [
+    'docs/house.jpg',
+    'docs/bedroom.jpg',
+    'samples/people/kitchen-bar.jpg',
+    'samples/landscapes/architecture-signs.jpg',
+    'samples/landscapes/girl-urban-view.jpg',
+    'samples/landscapes/nature-mountains.jpg',
+    'samples/landscapes/beach-boat.jpg',
+    'sample.jpg',
+];
+const AGENCY_LOGOS = ['logo.png', 'cloudinary_icon.png', 'samples/cloudinary-icon.png'];
+
+// publicIds are namespaced "saknly-seed/..." so deleting a seeded listing never touches a real upload
+const imagesFor = (index, count = 3) => Array.from({ length: count }, (_, i) =>
+{
+    const file = PROPERTY_IMAGES[(index + i) % PROPERTY_IMAGES.length];
+    return {
+        publicId: `saknly-seed/property-${index + 1}-${i + 1}`,
+        url: `${DEMO_IMAGE_BASE}/${file}`,
+        alt: 'صورة العقار',
+        isMain: i === 0,
+    };
+});
+
+const buildData = () =>
+{
+    const adminPassword = resolvePassword('SEED_ADMIN_PASSWORD');
+    const demoPassword = resolvePassword('SEED_DEMO_PASSWORD');
+    const adminHash = hashFunction({ payload: adminPassword.value });
+    const demoHash = hashFunction({ payload: demoPassword.value });
+
+    // ---------------- users
+    const admin = {
+        _id: id(), userName: 'Saknly Admin', firstName: 'مدير', lastName: 'سكنلي',
+        email: `admin@${EMAIL_DOMAIN}`, password: adminHash, phone: '01000000001',
+        address: 'شبين الكوم، المنوفية', role: 'admin', isConfirmed: true, status: 'active', provider: 'local',
+    };
+
+    const demoUsers = [
+        ['ahmed.ali', 'أحمد', 'علي', '01012345671', 'منوف، شارع الجيش'],
+        ['fatma.hassan', 'فاطمة', 'حسن', '01123456782', 'قويسنا، شارع المحطة'],
+        ['karim.mahmoud', 'كريم', 'محمود', '01234567893', 'تلا، منطقة الفيلات'],
+        ['sara.ibrahim', 'سارة', 'إبراهيم', '01098765434', 'شبين الكوم، شارع الجمهورية'],
+        ['omar.khaled', 'عمر', 'خالد', '01511223345', 'مدينة السادات، المنطقة الأولى'],
+        ['mona.adel', 'منى', 'عادل', '01155667786', 'أشمون، شارع سعد زغلول'],
+    ].map(([handle, firstName, lastName, phone, address]) => ({
+        _id: id(), userName: handle, firstName, lastName,
+        email: `${handle}@${EMAIL_DOMAIN}`, password: demoHash, phone, address,
+        role: 'user', isConfirmed: true, status: 'active', provider: 'local',
+    }));
+    const [ahmed, fatma, karim, sara, omar, mona] = demoUsers;
+
+    // ---------------- agencies
+    const agencies = [
+        { _id: id(), name: 'دلتا للتسويق العقاري', description: 'خبرة أكثر من 15 عاماً في سوق العقارات بشبين الكوم ومراكز المنوفية.', isFeatured: true },
+        { _id: id(), name: 'المنوفية للتطوير العقاري', description: 'مشروعات سكنية وتجارية في منوف وقويسنا بأنظمة سداد مرنة.', isFeatured: true },
+        { _id: id(), name: 'السادات هومز', description: 'وحدات سكنية وفيلات في مدينة السادات بالقرب من الجامعة والمنطقة الصناعية.', isFeatured: false },
+    ].map((agency, i) => ({
+        ...agency,
+        logo: { publicId: `saknly-seed/agency-${i + 1}`, url: `${DEMO_IMAGE_BASE}/${AGENCY_LOGOS[i]}` },
+        properties: [],
+    }));
+    const [delta, menoufia, sadat] = agencies;
+
+    // ---------------- properties
+    const T = PROPERTY_TYPES;
+    const base = (owner, contactName, contactPhone) => ({
+        owner: owner._id,
+        contactInfo: { name: contactName, phone: contactPhone, email: owner.email, whatsapp: contactPhone },
+        status: 'available',
+        isApproved: true,
+        isActive: true,
+        approvedBy: admin._id,
+        approvedAt: new Date(),
+    });
+
+    const properties = [
+        // ----- sale
+        {
+            title: 'شقة للبيع بشارع الجمهورية في شبين الكوم', description: 'شقة 150 متر تشطيب سوبر لوكس، 3 غرف نوم وحمامين وريسبشن كبير، قريبة من جامعة المنوفية.',
+            type: T.APARTMENT, category: 'sale', price: 1850000, area: 150, bedrooms: 3, bathrooms: 2, floor: 4, totalFloors: 8,
+            location: { address: 'شارع الجمهورية', city: 'شبين الكوم', district: 'وسط البلد', latitude: 30.5590, longitude: 31.0108 },
+            amenities: ['تكييف', 'مصعد', 'شرفة'], paymentMethod: 'cash', ownershipType: 'resale', propertyStatus: 'ready',
+            ...base(sara, 'سارة إبراهيم', sara.phone), agency: delta._id, views: 240, isNegotiable: true,
+        },
+        {
+            title: 'فيلا مستقلة للبيع في مدينة السادات', description: 'فيلا 350 متر مع حديقة خاصة وجراج، تقسيط حتى 7 سنوات.',
+            type: T.VILLA, category: 'sale', price: 6500000, area: 350, bedrooms: 5, bathrooms: 4, floor: 0, totalFloors: 2,
+            location: { address: 'الحي السابع', city: 'مدينة السادات', district: 'الحي السابع', latitude: 30.3626, longitude: 30.5263 },
+            amenities: ['موقف سيارات', 'أمن', 'مطبخ مجهز'], paymentMethod: 'cashOrInstallment', downPayment: 1500000,
+            installmentPeriodInYears: 7, minInstallmentAmount: 45000, ownershipType: 'firstOwner', propertyStatus: 'ready',
+            ...base(omar, 'عمر خالد', omar.phone), agency: sadat._id, views: 410,
+        },
+        {
+            title: 'دوبلكس للبيع في منوف تحت الإنشاء', description: 'دوبلكس 220 متر بمدخل خاص، استلام بعد سنة، مقدم 30% والباقي على 5 سنوات.',
+            type: T.DUPLEX, category: 'sale', price: 2900000, area: 220, bedrooms: 4, bathrooms: 3, floor: 5, totalFloors: 6,
+            location: { address: 'شارع الجيش', city: 'منوف', district: 'الجيش' },
+            amenities: ['مصعد', 'شرفة', 'مخزن'], paymentMethod: 'installment', downPayment: 870000, installmentPeriodInYears: 5,
+            ownershipType: 'firstOwner', propertyStatus: 'underConstruction', deliveryDate: new Date('2027-12-31'),
+            deliveryTerms: 'استلام نصف تشطيب',
+            ...base(ahmed, 'أحمد علي', ahmed.phone), agency: menoufia._id, views: 130,
+        },
+        {
+            title: 'محل تجاري للبيع على الطريق الرئيسي في قويسنا', description: 'محل 75 متر بواجهة كبيرة، يصلح لجميع الأنشطة.',
+            type: T.SHOP, category: 'sale', price: 1200000, area: 75, bedrooms: 0, bathrooms: 1, floor: 0, totalFloors: 4,
+            location: { address: 'طريق شبين - قويسنا', city: 'قويسنا', district: 'المحطة' },
+            amenities: ['أمن'], paymentMethod: 'cash', ownershipType: 'resale', propertyStatus: 'ready',
+            ...base(fatma, 'فاطمة حسن', fatma.phone), views: 75,
+        },
+        // ----- rent
+        {
+            title: 'شقة مفروشة للإيجار في منوف', description: 'شقة 120 متر مفروشة جزئياً، غرفتين نوم، قريبة من المستشفى العام.',
+            type: T.APARTMENT, category: 'rent', price: 4500, area: 120, bedrooms: 2, bathrooms: 1, floor: 3, totalFloors: 5,
+            location: { address: 'شارع المستشفى', city: 'منوف' },
+            amenities: ['تكييف', 'مفروشة جزئياً', 'مطبخ مجهز'], leaseDuration: 12, deposit: 9000,
+            utilities: { included: false, cost: 400, details: 'الكهرباء والمياه على المستأجر' },
+            rules: { pets: false, parties: false, other: 'للعائلات فقط' },
+            ...base(ahmed, 'أحمد علي', ahmed.phone), views: 320,
+        },
+        {
+            title: 'دوبلكس للإيجار في تلا بمنطقة الفيلات', description: 'دوبلكس 250 متر بحديقة صغيرة، 4 غرف نوم و3 حمامات.',
+            type: T.DUPLEX, category: 'rent', price: 9000, area: 250, bedrooms: 4, bathrooms: 3, floor: 0, totalFloors: 2,
+            location: { address: 'منطقة الفيلات بجوار النادي', city: 'تلا' },
+            amenities: ['موقف سيارات', 'أمن', 'شرفة'], leaseDuration: 24, deposit: 18000,
+            utilities: { included: false }, rules: { pets: true, parties: false },
+            ...base(karim, 'كريم محمود', karim.phone), views: 95,
+        },
+        {
+            title: 'محل للإيجار في الباجور', description: 'محل 60 متر على شارع تجاري حيوي.',
+            type: T.SHOP, category: 'rent', price: 6000, area: 60, bedrooms: 0, bathrooms: 1, floor: 0,
+            location: { address: 'شارع البحر', city: 'الباجور' },
+            amenities: ['أمن'], leaseDuration: 36, deposit: 12000,
+            ...base(mona, 'منى عادل', mona.phone), agency: delta._id, views: 40,
+        },
+        {
+            title: 'شقة للإيجار في أشمون قريبة من الموقف', description: 'شقة 95 متر، غرفتين وصالة، دور ثاني.',
+            type: T.APARTMENT, category: 'rent', price: 3000, area: 95, bedrooms: 2, bathrooms: 1, floor: 2, totalFloors: 4,
+            location: { address: 'شارع سعد زغلول', city: 'أشمون' },
+            amenities: ['شرفة'], leaseDuration: 12, deposit: 6000,
+            ...base(mona, 'منى عادل', mona.phone), views: 60, isNegotiable: true,
+        },
+        // ----- student
+        {
+            title: 'سكن طالبات بجوار جامعة المنوفية', description: 'غرف مشتركة لطالبات الجامعة، شاملة الإنترنت والمرافق.',
+            type: T.APARTMENT, category: 'student', price: 1800, area: 110, bedrooms: 3, bathrooms: 2, floor: 3, totalFloors: 5,
+            location: { address: 'خلف كلية الهندسة', city: 'شبين الكوم' },
+            amenities: ['مطبخ مجهز', 'أمن', 'تكييف'], leaseDuration: 9, deposit: 1800,
+            utilities: { included: true, details: 'شاملة الكهرباء والمياه والإنترنت' },
+            isStudentFriendly: true,
+            studentHousingDetails: {
+                isEnabled: true, nearbyUniversities: [{ name: 'جامعة المنوفية', distanceInKm: 0.5 }],
+                roomType: 'shared', studentsPerRoom: 2, genderPolicy: 'female', academicYearOnly: true, semester: 'academic-year',
+            },
+            ...base(sara, 'سارة إبراهيم', sara.phone), views: 280,
+        },
+        {
+            title: 'استوديو لطالب قريب من كلية التجارة', description: 'استوديو 65 متر مستقل، مناسب لطالب واحد، قريب من المواصلات.',
+            type: T.STUDIO, category: 'student', price: 2200, area: 65, bedrooms: 1, bathrooms: 1, floor: 1, totalFloors: 4,
+            location: { address: 'شارع كلية التجارة', city: 'شبين الكوم' },
+            amenities: ['تكييف', 'مطبخ مجهز'], leaseDuration: 10, deposit: 2200,
+            utilities: { included: true },
+            isStudentFriendly: true,
+            studentHousingDetails: {
+                isEnabled: true, nearbyUniversities: [{ name: 'جامعة المنوفية', distanceInKm: 1 }],
+                roomType: 'private', studentsPerRoom: 1, genderPolicy: 'male', academicYearOnly: false, semester: 'full-year',
+            },
+            ...base(karim, 'كريم محمود', karim.phone), views: 150,
+        },
+        // ----- pending (admin approval queue)
+        {
+            title: 'شقة للبيع في بركة السبع', description: 'شقة 130 متر، 3 غرف، نصف تشطيب في برج جديد.',
+            type: T.APARTMENT, category: 'sale', price: 950000, area: 130, bedrooms: 3, bathrooms: 1, floor: 6, totalFloors: 10,
+            location: { address: 'شارع المحطة', city: 'بركة السبع' },
+            amenities: ['مصعد'], paymentMethod: 'cash', ownershipType: 'firstOwner', propertyStatus: 'ready',
+            ...base(fatma, 'فاطمة حسن', fatma.phone),
+            status: 'pending', isApproved: false, isActive: false, approvedBy: undefined, approvedAt: undefined,
+        },
+        {
+            title: 'سكن طلاب في مدينة السادات', description: 'غرف فردية لطلاب جامعة مدينة السادات مع مطبخ مشترك.',
+            type: T.STUDIO, category: 'student', price: 1500, area: 70, bedrooms: 2, bathrooms: 1, floor: 2,
+            location: { address: 'الحي الثاني بجوار الجامعة', city: 'مدينة السادات' },
+            amenities: ['مطبخ مجهز'], leaseDuration: 9,
+            isStudentFriendly: true,
+            studentHousingDetails: {
+                isEnabled: true, nearbyUniversities: [{ name: 'جامعة مدينة السادات', distanceInKm: 0.8 }],
+                roomType: 'private', studentsPerRoom: 1, genderPolicy: 'male',
+            },
+            ...base(omar, 'عمر خالد', omar.phone),
+            status: 'pending', isApproved: false, isActive: false, approvedBy: undefined, approvedAt: undefined,
+        },
+    ].map((property, index) => ({ _id: id(), ...property, images: imagesFor(index) }));
+
+    // agency.properties[] mirrors property.agency
+    for (const property of properties)
+    {
+        if (property.agency)
+        {
+            agencies.find(a => a._id.equals(property.agency)).properties.push(property._id);
+        }
+    }
+
+    const approved = properties.filter(p => p.isApproved);
+
+    // ---------------- favourites / wishlists (kept consistent on both sides)
+    const favourites = [[ahmed, approved[1]], [ahmed, approved[8]], [fatma, approved[0]], [mona, approved[4]], [omar, approved[9]]];
+    for (const [user, property] of favourites)
+    {
+        user.wishlist = [...(user.wishlist || []), { property: property._id, addedAt: new Date() }];
+        property.favorites = [...(property.favorites || []), user._id];
+    }
+
+    // ---------------- inquiries (assigned to the listing owner, like the API does)
+    const inquiries = [
+        [approved[1], omar, 'مهتم بالفيلا وأرغب في تحديد موعد للمعاينة هذا الأسبوع.', 'new'],
+        [approved[4], fatma, 'هل الإيجار يشمل فواتير الكهرباء والمياه؟ وهل يوجد مصعد؟', 'responded'],
+        [approved[8], mona, 'أريد حجز غرفة لابنتي بداية العام الدراسي، هل يوجد مكان متاح؟', 'in-progress'],
+    ].map(([property, from, message, status]) => ({
+        _id: id(), property: property._id, name: `${from.firstName} ${from.lastName}`, email: from.email,
+        phone: from.phone, message, status, agent: property.owner,
+    }));
+    for (const inquiry of inquiries)
+    {
+        const property = properties.find(p => p._id.equals(inquiry.property));
+        property.inquiries = [...(property.inquiries || []), inquiry._id];
+    }
+
+    // ---------------- comments
+    const comments = [
+        [approved[0], ahmed, 'الشقة تبدو رائعة! هل السعر قابل للتفاوض؟'],
+        [approved[0], fatma, 'موقع ممتاز جداً، بالتوفيق في البيع.'],
+        [approved[4], sara, 'هل يمكن المعاينة يوم الجمعة؟'],
+        [approved[8], mona, 'هل السكن قريب من بوابة الجامعة الرئيسية؟'],
+    ].map(([property, user, text]) => ({ _id: id(), property: property._id, user: user._id, text }));
+
+    // ---------------- contact messages
+    const contacts = [
+        { name: 'محمد عبدالله', email: `mohamed.abdallah@${EMAIL_DOMAIN}`, subject: 'اقتراح إضافة البحث بالخريطة', message: 'أقترح إضافة خاصية البحث عن العقارات على الخريطة.' },
+        { name: 'هبة مصطفى', email: `heba.mostafa@${EMAIL_DOMAIN}`, subject: 'استفسار عن نشر عقار', message: 'كم يستغرق مراجعة العقار قبل نشره على الموقع؟', status: 'in-progress' },
+    ].map(contact => ({ _id: id(), ...contact }));
+
+    // ---------------- testimonials (approved so they show on the site)
+    const testimonials = [
+        { name: 'أحمد علي', text: 'وجدت شقة مناسبة في منوف خلال أسبوع واحد. تجربة ممتازة!', role: 'مستأجر', type: 'general' },
+        { name: 'سارة إبراهيم', text: 'نشرت شقتي وتواصل معي أكثر من مشتري جاد. شكراً سكنلي.', role: 'مالكة عقار', type: 'general' },
+        { name: 'منى عادل', text: 'سكن الطالبات كان آمن وقريب من الجامعة كما هو موصوف.', role: 'ولية أمر', type: 'property', propertyId: approved[8]._id },
+        { name: 'عمر خالد', text: 'تعامل محترم وسرعة في الرد من فريق السادات هومز.', role: 'عميل', type: 'agency', agencyId: sadat._id },
+    ].map(t => ({ _id: id(), ...t, status: 'approved' }));
+
+    return {
+        passwords: { admin: adminPassword, demo: demoPassword },
+        docs: {
+            users: [admin, ...demoUsers].map(u => new User(u)),
+            agencies: agencies.map(a => new Agency(a)),
+            properties: properties.map(p => new Property(p)), // base model picks the discriminator from category
+            inquiries: inquiries.map(i => new PropertyInquiry(i)),
+            comments: comments.map(c => new Comment(c)),
+            contacts: contacts.map(c => new ContactUs(c)),
+            testimonials: testimonials.map(t => new Testimonial(t)),
+        },
+    };
+};
+
+// Sanity checks the enums the client relies on
+const assertEnums = (properties) =>
+{
+    for (const p of properties)
+    {
+        if (!CITIES.includes(p.location.city)) throw new Error(`Unknown city ${p.location.city}`);
+        if (!Object.values(PROPERTY_TYPES).includes(p.type)) throw new Error(`Unknown type ${p.type}`);
+        for (const a of p.amenities) if (!AMENITIES.includes(a)) throw new Error(`Unknown amenity ${a}`);
+    }
+};
+
+const COLLECTIONS = [
+    ['users', User], ['agencies', Agency], ['properties', Property], ['inquiries', PropertyInquiry],
+    ['comments', Comment], ['contacts', ContactUs], ['testimonials', Testimonial],
+];
+
+const seed = async () =>
+{
+    if (!process.env.MONGODB_URI)
+    {
+        throw new Error('MONGODB_URI is not set (root .env or config/.env)');
+    }
+
+    // 1. Build + validate everything BEFORE touching the database
+    const { docs, passwords } = buildData();
+    assertEnums(docs.properties);
+
+    const validationErrors = [];
+    for (const [name, list] of Object.entries(docs))
+    {
+        list.forEach((doc, index) =>
+        {
+            const error = doc.validateSync();
+            if (error)
+            {
+                validationErrors.push(`${name}[${index}]: ${Object.values(error.errors).map(e => e.message).join('; ')}`);
+            }
+        });
+    }
+    if (validationErrors.length > 0)
+    {
+        throw new Error(`Seed data is invalid, nothing was changed:\n  ${validationErrors.join('\n  ')}`);
+    }
+
+    // 2. Connect (same database selection as the API)
+    await mongoose.connect(process.env.MONGODB_URI, {
+        dbName: process.env.DB_NAME || 'saknly',
+        serverSelectionTimeoutMS: 10000,
+    });
+    console.log(`>>> Connected to database "${mongoose.connection.name}"`);
+
+    // 3. Refuse to overwrite existing data unless --reset
+    const counts = await Promise.all(COLLECTIONS.map(([, Model]) => Model.estimatedDocumentCount()));
+    const nonEmpty = COLLECTIONS.filter((_, i) => counts[i] > 0).map(([name], i) => name);
+    if (nonEmpty.length > 0 && !RESET)
+    {
+        throw new Error(`Database already has data (${nonEmpty.join(', ')}). Re-run with --reset to wipe and re-seed.`);
+    }
+
+    if (RESET)
+    {
+        console.log('>>> --reset: deleting existing Saknly data...');
+        for (const [, Model] of COLLECTIONS)
+        {
+            await Model.deleteMany({});
+        }
+    }
+
+    // 4. Insert with save() so pre-save hooks (property slugs) run
+    await Promise.all(COLLECTIONS.map(([, Model]) => Model.init())); // build unique indexes first
+    const order = ['users', 'agencies', 'properties', 'inquiries', 'comments', 'contacts', 'testimonials'];
+    for (const name of order)
+    {
+        for (const doc of docs[name])
+        {
+            await doc.save();
+        }
+        console.log(`✅ ${name}: ${docs[name].length}`);
+    }
+
+    console.log('\nSeed complete.');
+    console.log(`  Admin login: admin@${EMAIL_DOMAIN}`);
+    console.log(`  Demo users:  ahmed.ali, fatma.hassan, karim.mahmoud, sara.ibrahim, omar.khaled, mona.adel @${EMAIL_DOMAIN}`);
+    if (passwords.admin.generated || passwords.demo.generated)
+    {
+        console.log('\n  Generated passwords (shown only now - set SEED_ADMIN_PASSWORD / SEED_DEMO_PASSWORD to choose your own):');
+        if (passwords.admin.generated) console.log(`    admin: ${passwords.admin.value}`);
+        if (passwords.demo.generated) console.log(`    demo users: ${passwords.demo.value}`);
+    }
+    else
+    {
+        console.log('  Passwords: from SEED_ADMIN_PASSWORD / SEED_DEMO_PASSWORD');
+    }
+};
+
+seed()
+    .then(async () =>
+    {
+        await mongoose.disconnect();
+        process.exit(0);
+    })
+    .catch(async (error) =>
+    {
+        console.error(`❌ Seed failed: ${error.message}`);
+        await mongoose.disconnect().catch(() => { });
         process.exit(1);
-    }
-};
-
-// =================================================================
-// 3. تعريف الـ Object IDs لربط البيانات
-// =================================================================
-const adminUserId = new mongoose.Types.ObjectId();
-const user1Id = new mongoose.Types.ObjectId(); // Menouf
-const user2Id = new mongoose.Types.ObjectId(); // Quweisna
-const user3Id = new mongoose.Types.ObjectId(); // Tala (inactive)
-const user4Id = new mongoose.Types.ObjectId(); // Tanta
-const user5Id = new mongoose.Types.ObjectId(); // Sadat City
-const user6Id = new mongoose.Types.ObjectId(); // Shebin
-
-const agency1Id = new mongoose.Types.ObjectId(); // Delta (Shebin)
-const agency2Id = new mongoose.Types.ObjectId(); // Al-Gharbia (Tanta)
-const agency3Id = new mongoose.Types.ObjectId(); // Emaar (Sadat City)
-
-const property1Id = new mongoose.Types.ObjectId();
-const property2Id = new mongoose.Types.ObjectId();
-const property3Id = new mongoose.Types.ObjectId();
-const property4Id = new mongoose.Types.ObjectId();
-const property5Id = new mongoose.Types.ObjectId();
-const property6Id = new mongoose.Types.ObjectId();
-const property7Id = new mongoose.Types.ObjectId();
-const property8Id = new mongoose.Types.ObjectId(); // Villa in Sadat
-const property9Id = new mongoose.Types.ObjectId(); // Student housing in Shebin
-const property10Id = new mongoose.Types.ObjectId(); // Shop in Menouf
-const property11Id = new mongoose.Types.ObjectId(); // Apartment for rent in Tanta
-
-// =================================================================
-// 4. بيانات المستخدمين (Users)
-// =================================================================
-const createUsers = async () => {
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash('password123', salt);
-
-    return [
-        { _id: adminUserId, name: 'Admin Saknly', email: 'admin@saknly.com', password: hashedPassword, phone: '01012345678', role: 'admin', address: { street: '123 Main St', city: 'شبين الكوم', zipCode: '12345' }, isActive: true, isVerified: true },
-        { _id: user1Id, name: 'أحمد علي', email: 'ahmed.ali@example.com', password: hashedPassword, phone: '01123456789', role: 'user', address: { street: '456 Oak Ave', city: 'منوف', zipCode: '23456' }, isActive: true },
-        { _id: user2Id, name: 'فاطمة الزهراء', email: 'fatima.z@example.com', password: hashedPassword, phone: '01234567890', role: 'user', address: { street: '789 Pine Ln', city: 'قويسنا', zipCode: '34567' }, isActive: true },
-        { _id: user3Id, name: 'كريم محمود', email: 'karim.m@example.com', password: hashedPassword, phone: '01567890123', role: 'user', address: { street: '101 Maple Dr', city: 'تلا', zipCode: '45678' }, isActive: false },
-        { _id: user4Id, name: 'سارة إبراهيم', email: 'sara.ibrahim@example.com', password: hashedPassword, phone: '01098765432', role: 'user', address: { street: '212 El-Galaa St', city: 'طنطا', zipCode: '56789' }, isActive: true },
-        { _id: user5Id, name: 'عمرو دياب', email: 'amr.diab@example.com', password: hashedPassword, phone: '01111111111', role: 'user', address: { street: ' المنطقة السكنية الأولى', city: 'مدينة السادات', zipCode: '67890' }, isActive: true },
-        { _id: user6Id, name: 'تامر حسني', email: 'tamer.hosny@example.com', password: hashedPassword, phone: '01222222222', role: 'user', address: { street: 'شارع الاستاد', city: 'شبين الكوم', zipCode: '12345' }, isActive: true },
-    ];
-};
-
-// =================================================================
-// 5. بيانات الوكالات العقارية (Agencies)
-// =================================================================
-const agenciesData = [
-    { _id: agency1Id, name: 'شركة دلتا العقارية', email: 'contact@delta.com', phone: '0482223333', address: { street: 'شارع الجمهورية', city: 'شبين الكوم', zipCode: '12345' }, description: 'رواد العقارات في المنوفية، خبرة تمتد لعشرين عاماً.', logo: { publicId: 'logos/delta_logo', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/logos/delta_logo.png' }, isFeatured: true },
-    { _id: agency2Id, name: 'الغربية للتطوير العقاري', email: 'info@gharbia-dev.com', phone: '0403334444', address: { street: 'شارع البحر', city: 'طنطا', zipCode: '56789' }, description: 'مشاريع سكنية وتجارية فاخرة في قلب الدلتا.', logo: { publicId: 'logos/gharbia_logo', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/logos/gharbia_logo.png' } },
-    { _id: agency3Id, name: 'إعمار مصر للتنمية', email: 'sales@emaar.eg', phone: '16116', address: { street: 'ميفيدا، التجمع الخامس', city: 'مدينة السادات', zipCode: '67890' }, description: 'نخلق مجتمعات عالمية المستوى في مصر.', logo: { publicId: 'logos/emaar_logo', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/logos/emaar_logo.png' }, isFeatured: true },
-];
-
-// =================================================================
-// 6. بيانات العقارات (Properties)
-// =================================================================
-const propertiesData = [
-    // --- عقارات موجودة ---
-    { _id: property1Id, title: 'شقة للبيع بموقع متميز في شارع الجلاء البحري', description: 'شقة 175 متر تشطيب سوبر لوكس، 3 غرف نوم و2 حمام وريسبشن كبير.', type: 'شقة', category: 'sale', price: 2300000, area: 175, bedrooms: 3, bathrooms: 2, floor: 8, totalFloors: 11, location: { address: 'شارع الجلاء البحري، أمام حلواني العيسوي', city: 'طنطا', district: 'حي أول طنطا' }, images: [{ publicId: 'props/p1_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p1_1.jpg', isMain: true }], amenities: ['تكييف', 'مصعد', 'شرفة'], owner: user4Id, agency: agency2Id, status: 'available', isApproved: true, approvedBy: adminUserId, paymentMethod: 'cash', ownershipType: 'resale', propertyStatus: 'ready' },
-    { _id: property2Id, title: 'فيلا للبيع في كمبوند جرين فالي', description: 'فيلا مستقلة 400 متر مع حديقة خاصة 150 متر وحمام سباحة.', type: 'فيلا', category: 'sale', price: 7500000, area: 400, bedrooms: 5, bathrooms: 5, floor: 0, totalFloors: 2, location: { address: 'كمبوند جرين فالي، الكيلو 15 طريق مصر اسكندرية الزراعي', city: 'قويسنا' }, images: [{ publicId: 'props/p2_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p2_1.jpg', isMain: true }], amenities: ['موقف سيارات', 'أمن', 'مطبخ مجهز'], owner: agency1Id, isApproved: true, approvedBy: adminUserId, paymentMethod: 'cashOrInstallment', downPayment: 1500000, installmentPeriodInYears: 7, ownershipType: 'firstOwner', propertyStatus: 'ready' },
-    { _id: property3Id, title: 'شقة مفروشة بالكامل للايجار في منوف', description: 'شقة 120 متر، غرفتين نوم، مكيفة بالكامل وبها جميع الأجهزة.', type: 'شقة', category: 'rent', price: 6000, area: 120, bedrooms: 2, bathrooms: 1, floor: 3, totalFloors: 5, location: { address: 'شارع الجيش، بجوار المستشفى العام', city: 'منوف' }, images: [{ publicId: 'props/p3_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p3_1.jpg', isMain: true }], amenities: ['تكييف', 'شرفة', 'مفروشة بالكامل'], owner: user1Id, isApproved: true, approvedBy: adminUserId, leaseDuration: 12, deposit: 12000, utilities: { included: true } },
-    { _id: property4Id, title: 'محل تجاري للإيجار بموقع حيوي في شبين الكوم', description: 'محل 50 متر على شارع رئيسي، يصلح لجميع الأنشطة التجارية.', type: 'محل', category: 'rent', price: 15000, area: 50, bedrooms: 0, bathrooms: 1, floor: 0, location: { address: 'شارع باريس، أمام كارفور', city: 'شبين الكوم' }, images: [{ publicId: 'props/p4_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p4_1.jpg', isMain: true }], amenities: ['موقف سيارات'], owner: agency1Id, status: 'available', isApproved: true, approvedBy: adminUserId },
-    { _id: property5Id, title: 'غرفة فردية لسكن طالبات بالقرب من جامعة المنوفية', description: 'غرفة مستقلة في شقة مشتركة للطالبات فقط. شاملة واي فاي.', type: 'استوديو', category: 'student', price: 1800, area: 20, bedrooms: 1, bathrooms: 1, floor: 4, location: { address: 'خلف كلية الهندسة، شارع مصطفى كامل', city: 'شبين الكوم' }, images: [{ publicId: 'props/p5_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p5_1.jpg', isMain: true }], amenities: ['مطبخ مجهز', 'أمن', ' واي فاي'], owner: user2Id, isApproved: true, approvedBy: adminUserId, isStudentFriendly: true, studentHousingDetails: { isEnabled: true, nearbyUniversities: [{ name: 'جامعة المنوفية', distanceInKm: 0.5 }], genderRestriction: 'female' } },
-    { _id: property6Id, title: 'شقة للبيع في أشمون استلام فوري', description: 'شقة 150 متر، 3 غرف، نصف تشطيب، في برج جديد.', type: 'شقة', category: 'sale', price: 950000, area: 150, bedrooms: 3, bathrooms: 2, floor: 6, totalFloors: 10, location: { address: 'شارع سعد زغلول', city: 'أشمون' }, images: [{ publicId: 'props/p6_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p6_1.jpg', isMain: true }], amenities: ['مصعد', 'شرفة'], owner: agency1Id, isApproved: false, paymentMethod: 'cash', ownershipType: 'firstOwner', propertyStatus: 'ready' },
-    { _id: property7Id, title: 'دوبلكس للإيجار في تلا بمنطقة الفيلات', description: 'دوبلكس 250 متر بمدخل خاص وحديقة صغيرة. 4 غرف نوم.', type: 'دوبلكس', category: 'rent', price: 9000, area: 250, bedrooms: 4, bathrooms: 3, floor: 0, totalFloors: 1, location: { address: 'منطقة الفيلات، بالقرب من النادي', city: 'تلا' }, images: [{ publicId: 'props/p7_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p7_1.jpg', isMain: true }], amenities: ['موقف سيارات', 'حديقة خاصة', 'أمن'], owner: user3Id, isApproved: true, approvedBy: adminUserId },
-    // --- عقارات جديدة ---
-    { _id: property8Id, title: 'فيلا فاخرة للبيع في كايرو جيت - إعمار', description: 'فيلا 550 متر في أرقى مناطق مدينة السادات، تصميم عصري وإطلالة على مساحات خضراء.', type: 'فيلا', category: 'sale', price: 12000000, area: 550, bedrooms: 6, bathrooms: 7, floor: 0, totalFloors: 3, location: { address: 'كمبوند كايرو جيت', city: 'مدينة السادات' }, images: [{ publicId: 'props/p8_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p8_1.jpg', isMain: true }], amenities: ['موقف سيارات', 'أمن', 'مطبخ مجهز', 'حديقة خاصة', 'حمام سباحة'], owner: agency3Id, isApproved: true, approvedBy: adminUserId, paymentMethod: 'installment', downPayment: 2400000, installmentPeriodInYears: 10, ownershipType: 'firstOwner', propertyStatus: 'underConstruction', deliveryDate: new Date('2026-12-31') },
-    { _id: property9Id, title: 'استوديو لسكن الطلاب بجوار كلية التجارة', description: 'استوديو 45 متر، مثالي للطلاب، قريب جدا من المواصلات والخدمات.', type: 'استوديو', category: 'student', price: 2200, area: 45, bedrooms: 1, bathrooms: 1, floor: 2, location: { address: 'شارع كلية التجارة', city: 'شبين الكوم' }, images: [{ publicId: 'props/p9_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p9_1.jpg', isMain: true }], amenities: ['مطبخ مجهز', ' واي فاي', 'شرفة'], owner: user6Id, isApproved: true, approvedBy: adminUserId, isStudentFriendly: true, studentHousingDetails: { isEnabled: true, nearbyUniversities: [{ name: 'جامعة المنوفية', distanceInKm: 1 }], genderRestriction: 'male' } },
-    { _id: property10Id, title: 'محل للإيجار في شارع بور سعيد', description: 'محل 30 متر، واجهة كبيرة، يصلح لكافة الأنشطة.', type: 'محل', category: 'rent', price: 8000, area: 30, bedrooms: 0, bathrooms: 0, floor: 0, location: { address: 'شارع بور سعيد الرئيسي', city: 'منوف' }, images: [{ publicId: 'props/p10_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p10_1.jpg', isMain: true }], owner: user1Id, isApproved: true, approvedBy: adminUserId, status: 'rented' },
-    { _id: property11Id, title: 'شقة إيجار جديد بسعر لقطة في طنطا', description: 'شقة 90 متر غرفتين وصالة، تشطيب عادي، دور رابع بدون مصعد.', type: 'شقة', category: 'rent', price: 2500, area: 90, bedrooms: 2, bathrooms: 1, floor: 4, totalFloors: 5, location: { address: 'سيجر', city: 'طنطا' }, images: [{ publicId: 'props/p11_1', url: 'https://res.cloudinary.com/demo/image/upload/v1625149495/props/p11_1.jpg', isMain: true }], amenities: [], owner: user4Id, isApproved: true, approvedBy: adminUserId, leaseDuration: 24 },
-];
-
-// =================================================================
-// 7. بيانات التعليقات (Comments)
-// =================================================================
-const commentsData = [
-    { property: property1Id, user: user1Id, text: 'الشقة تبدو رائعة! هل السعر قابل للتفاوض؟', rating: 4 },
-    { property: property1Id, user: user2Id, text: 'موقع ممتاز جداً، بالتوفيق في البيع.', rating: 5 },
-    { property: property3Id, user: user4Id, text: 'هل الإيجار شامل فواتير الكهرباء والمياه؟', rating: 3 },
-    { property: property8Id, user: user5Id, text: 'مشروع واعد! متحمس للاستلام.', rating: 5 },
-    { property: property9Id, user: user6Id, text: 'هل يوجد سراير أخرى في الاستوديو؟', rating: 4 },
-];
-
-// =================================================================
-// 8. بيانات الاستفسارات (Inquiries)
-// =================================================================
-const inquiriesData = [
-    { property: property2Id, user: user2Id, message: 'مهتم بالفيلا، أود تحديد موعد للمعاينة.' },
-    { property: property4Id, user: user1Id, message: 'أنا صاحب نشاط تجاري وأبحث عن محل.' },
-    { property: property8Id, user: user5Id, message: 'أرغب في معرفة المزيد عن أنظمة السداد للفيلا في مدينة السادات.' },
-];
-
-// =================================================================
-// 9. بيانات رسائل التواصل (Contact Us)
-// =================================================================
-const contactsData = [
-    { name: 'محمد عبدالله', email: 'mohamed.abd@email.com', phone: '01011223344', subject: 'اقتراح إضافة خاصية جديدة', message: 'أقترح إضافة خاصية البحث بالخريطة.' },
-    { name: 'هبة مصطفى', email: 'heba.m@email.com', phone: '01155667788', subject: 'مشكلة في عرض الصور', message: 'بعض الصور لا تظهر بشكل جيد.' },
-];
-
-// =================================================================
-// 10. بيانات شهادات العملاء (Testimonials)
-// =================================================================
-const testimonialsData = [
-    { user: user1Id, agency: agency1Id, text: 'تجربة ممتازة مع شركة دلتا، محترفين جداً.', rating: 5, isApproved: true },
-    { user: user4Id, agency: agency2Id, text: 'مصداقية وسرعة في التعامل. شكراً لكم.', rating: 4, isApproved: true },
-    { user: user5Id, agency: agency3Id, text: 'اسم كبير ومشاريع على أرض الواقع تتحدث عن نفسها. فخور بكوني عميل لديكم.', rating: 5, isApproved: true },
-];
-
-// =================================================================
-// 11. الدالة الرئيسية لملء قاعدة البيانات
-// =================================================================
-const seedDatabase = async () => {
-    try {
-        await connectDB();
-
-        console.log('>>> جاري حذف البيانات القديمة...');
-        await Testimonial.deleteMany({});
-        await ContactUs.deleteMany({});
-        await PropertyInquiry.deleteMany({});
-        await Comment.deleteMany({});
-        await Property.deleteMany({});
-        await Agency.deleteMany({});
-        await User.deleteMany({});
-        console.log('>>> تم حذف البيانات القديمة بنجاح.');
-
-        console.log('>>> جاري تجهيز وإدخال البيانات الجديدة...');
-        const users = await createUsers();
-
-        await User.create(users);
-        console.log('✅ تم إدخال المستخدمين');
-
-        await Agency.create(agenciesData);
-        console.log('✅ تم إدخال الوكالات');
-
-        await Property.create(propertiesData);
-        console.log('✅ تم إدخال العقارات');
-
-        await Comment.create(commentsData);
-        console.log('✅ تم إدخال التعليقات');
-
-        await PropertyInquiry.create(inquiriesData);
-        console.log('✅ تم إدخال استفسارات العقارات');
-
-        await ContactUs.create(contactsData);
-        console.log('✅ تم إدخال رسائل التواصل');
-
-        await Testimonial.create(testimonialsData);
-        console.log('✅ تم إدخال شهادات العملاء');
-
-        console.log('\n🎉🎉🎉 تمت عملية ملء قاعدة البيانات بالبيانات الأولية بنجاح! 🎉🎉🎉');
-
-    } catch (error) {
-        console.error('❌❌❌ خطأ أثناء عملية ملء قاعدة البيانات:', error);
-    } finally {
-        console.log('>>> جاري إغلاق الاتصال بقاعدة البيانات.');
-        mongoose.connection.close();
-        process.exit();
-    }
-};
-
-seedDatabase();
+    });

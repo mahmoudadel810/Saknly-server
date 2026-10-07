@@ -8,7 +8,8 @@ export const hashFunction = ({
     saltRounds = process.env.SALT_ROUNDS,
 }) =>
 {
-    const hashedPassword = bcrypt.hashSync(payload, +saltRounds);
+    const rounds = Number(saltRounds);
+    const hashedPassword = bcrypt.hashSync(payload, Number.isInteger(rounds) && rounds >= 8 && rounds <= 15 ? rounds : 10);
     return hashedPassword;
 }
 

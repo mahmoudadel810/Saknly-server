@@ -33,6 +33,7 @@ export const contactValidator = {
 
         message: joi.string()
             .required()
+            .max(2000)
             .messages({
                 'string.empty': 'Message is required',
                 'any.required': 'Message is required',

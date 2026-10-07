@@ -1,4 +1,21 @@
 import logger from '../utils/logger.js';
+import cloudinary from '../services/cloudinary.js';
+
+// A request that failed after multer stored files in Cloudinary must not leave orphans
+const discardUploadedFiles = (req) =>
+{
+    const files = [];
+    if (req.file) files.push(req.file);
+    if (req.files) files.push(...(Array.isArray(req.files) ? req.files : Object.values(req.files).flat()));
+
+    files.forEach(file =>
+    {
+        if (file?.public_id)
+        {
+            Promise.resolve(cloudinary.uploader.destroy(file.public_id)).catch(() => { });
+        }
+    });
+};
 
 export class AppError extends Error
 {
@@ -23,8 +40,7 @@ export const notFound = (req, res, next) =>
 {
     const error = new AppError(`Not Found - ${req.originalUrl}`, 404);
     // Log not-found errors as warnings
-    logger.warn(`Not Found - ${req.originalUrl}`, { method: req.method, ip: req.ip, user: req.user ? req.user._id : 'anonymous' });
-    console.log(`WARNING: Not Found - ${req.originalUrl}`);
+    logger.warn(`Not Found - ${req.originalUrl}`, { method: req.method });
     next(error);
 };
 
@@ -44,7 +60,7 @@ export const errorHandler = (err, req, res, next) =>
     // Mongoose duplicate key
     if (err.code === 11000)
     {
-        const field = Object.keys(err.keyValue)[0];
+        const field = Object.keys(err.keyValue || {})[0] || 'Value';
         message = `${field} already exists`;
         statusCode = 400;
     }
@@ -54,21 +70,12 @@ export const errorHandler = (err, req, res, next) =>
     {
         message = Object.values(err.errors).map(val => val.message).join(', ');
         statusCode = 400;
-        logger.error(`${statusCode} - ${message}`, { stack: err.stack });
-        console.log(`ERROR [${statusCode}]: ${message}`);
     }
 
     // Joi validation error (from our custom validation middleware)
     if (err.message && err.message.includes('Validation failed:'))
     {
         statusCode = 400;
-        console.log('=== VALIDATION ERROR ===');
-        console.log('Error message:', err.message);
-        console.log('Request URL:', req.originalUrl);
-        console.log('Request method:', req.method);
-        console.log('Request body keys:', Object.keys(req.body || {}));
-        console.log('Files:', req.files ? req.files.length : 0);
-        console.log('Content-Type:', req.headers['content-type']);
     }
 
     // JWT errors
@@ -91,23 +98,11 @@ export const errorHandler = (err, req, res, next) =>
         statusCode = 400;
     }
 
-    // Multer "Unexpected field" error
-    if (err.message === 'Unexpected field')
+    // Multer errors (unexpected field, too many files, ...)
+    if (err.name === 'MulterError')
     {
-        message = `Invalid file field name. Please check the form field names. Error details: ${err.message}`;
+        message = err.code === 'LIMIT_FILE_SIZE' ? 'File too large' : `Upload error: ${err.message}`;
         statusCode = 400;
-        console.log('=== MULTER UNEXPECTED FIELD ERROR ===');
-        console.log('Error message:', err.message);
-        console.log('Error stack:', err.stack);
-        console.log('Request URL:', req.originalUrl);
-        console.log('Request method:', req.method);
-        console.log('Request headers:', req.headers);
-        console.log('Content-Type:', req.headers['content-type']);
-        console.log('Request body keys:', Object.keys(req.body || {}));
-        console.log('Files:', req.files);
-        console.log('File field names:', req.files ? req.files.map(f => f.fieldname) : 'No files');
-        console.log('Expected field name: images');
-        console.log('All field names in request:', Object.keys(req.body || {}));
     }
 
     // Email errors
@@ -117,22 +112,28 @@ export const errorHandler = (err, req, res, next) =>
         statusCode = 503;
     }
 
-    // Log error using Winston
-    logger.error(`${statusCode} - ${message}`, { stack: err.stack });
+    discardUploadedFiles(req);
 
-    // Console log with visual indicator for better visibility
-    console.log(`ERROR [${statusCode}]: ${message}`);
-
-    // In development, also log the stack trace
-    if (process.env.NODE_ENV === 'development')
+    // Log server errors with stack; client errors as a one-line warning
+    if (statusCode >= 500)
     {
-        console.log('Stack trace:', err.stack);
+        logger.error(`${statusCode} - ${message}`, { stack: err.stack });
+    }
+    else
+    {
+        logger.warn(`${statusCode} - ${message}`);
+    }
+
+    // Never leak internals of unexpected errors in production
+    if (statusCode >= 500 && process.env.NODE_ENV === 'production' && !err.isOperational)
+    {
+        message = 'Internal server error';
     }
 
     res.status(statusCode).json({
         success: false,
         message,
-        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : null,
         ...(process.env.NODE_ENV === 'development' && { error: err }),
     });
 };

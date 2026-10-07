@@ -8,6 +8,15 @@ import
   createPaginatedResponse,
 } from "../../../utils/pagination.js";
 import sendEmail from "../../../services/sendEmail.js";
+import logger from "../../../utils/logger.js";
+
+const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const escapeHtml = (value) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
 
 
 export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
@@ -42,7 +51,7 @@ export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
   // Populate property and agent details
   await inquiry.populate([
     { path: "property", select: "title price location images" },
-    { path: "agent", select: "userName email phone" },
+    { path: "agent", select: "userName" },
   ]);
 
   // Notify property agent/owner about the inquiry
@@ -59,11 +68,11 @@ export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
           message: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
               <h2>New Property Inquiry</h2>
-              <p>You have received a new inquiry about property: ${inquiry.property.title || 'N/A'}</p>
-              <p><strong>From:</strong> ${name}</p>
-              <p><strong>Email:</strong> ${email}</p>
-              <p><strong>Phone:</strong> ${phone}</p>
-              <p><strong>Message:</strong> ${message}</p>
+              <p>You have received a new inquiry about property: ${escapeHtml(inquiry.property?.title || 'N/A')}</p>
+              <p><strong>From:</strong> ${escapeHtml(name)}</p>
+              <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+              <p><strong>Phone:</strong> ${escapeHtml(phone)}</p>
+              <p><strong>Message:</strong> ${escapeHtml(message)}</p>
               <p>Please respond to this inquiry as soon as possible.</p>
             </div>
           `
@@ -71,7 +80,7 @@ export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
       }
     } catch (error)
     {
-      console.log("Failed to send agent notification email:", error);
+      logger.warn(`Inquiry notification email failed: ${error.message}`);
       // Continue execution as the inquiry was created successfully
     }
   }
@@ -97,18 +106,12 @@ export const getPropertyInquiries = asyncHandler(async (req, res, next) =>
   // Build filter object
   const filter = {};
 
-  // If user is agent, only show inquiries assigned to them
-  if (req.user.role === "agent")
-  {
-    filter.agent = req.user._id;
-  }
-
-  if (status)
+  if (typeof status === "string" && ["new", "in-progress", "responded", "closed"].includes(status))
   {
     filter.status = status;
   }
 
-  if (propertyId)
+  if (typeof propertyId === "string" && /^[0-9a-fA-F]{24}$/.test(propertyId))
   {
     filter.property = propertyId;
   }
@@ -118,14 +121,18 @@ export const getPropertyInquiries = asyncHandler(async (req, res, next) =>
     filter.isRead = isRead === "true";
   }
 
-  if (search)
+  if (typeof search === "string" && search.trim())
   {
+    const safeSearch = escapeRegex(search.trim().slice(0, 100));
     filter.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { message: { $regex: search, $options: "i" } },
+      { name: { $regex: safeSearch, $options: "i" } },
+      { email: { $regex: safeSearch, $options: "i" } },
+      { message: { $regex: safeSearch, $options: "i" } },
     ];
   }
+
+  const currentPage = Math.max(parseInt(page, 10) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
 
   const inquiries = await propertyInquiryModel.find(filter)
     .populate([
@@ -133,8 +140,8 @@ export const getPropertyInquiries = asyncHandler(async (req, res, next) =>
       { path: "agent", select: "userName email phone" },
     ])
     .sort({ createdAt: -1 })
-    .skip((parseInt(page) - 1) * parseInt(limit))
-    .limit(parseInt(limit));
+    .skip((currentPage - 1) * pageSize)
+    .limit(pageSize);
 
   const total = await propertyInquiryModel.countDocuments(filter);
 
@@ -143,8 +150,8 @@ export const getPropertyInquiries = asyncHandler(async (req, res, next) =>
     message: "Property inquiries retrieved successfully",
     data: inquiries,
     pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page: currentPage,
+      limit: pageSize,
       total,
     },
   });
@@ -162,12 +169,6 @@ export const getPropertyInquiryById = asyncHandler(async (req, res, next) =>
   if (!inquiry)
   {
     return next(new AppError("Property inquiry not found", 404));
-  }
-
-  // Check if user has access to this inquiry
-  if (req.user.role === "agent" && inquiry.agent.toString() !== req.user._id.toString())
-  {
-    return next(new AppError("Not authorized to access this inquiry", 403));
   }
 
   // Mark as read if not already read
@@ -207,12 +208,6 @@ export const updateInquiryStatus = asyncHandler(async (req, res, next) =>
   if (!inquiry)
   {
     return next(new AppError("Property inquiry not found", 404));
-  }
-
-  // Check if user has access to this inquiry
-  if (req.user.role === "agent" && inquiry.agent.toString() !== req.user._id.toString())
-  {
-    return next(new AppError("Not authorized to update this inquiry", 403));
   }
 
   inquiry.status = status;

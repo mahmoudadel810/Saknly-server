@@ -1,15 +1,13 @@
-
+import './utils/loadEnv.js'; // must stay the first import: loads env before other modules read it
 import initiateApp from './utils/App/initiateApp.js';
 import MainRoutes from './modules/indexRouters.js';
-import path from 'path';
-import { config } from 'dotenv'; 
-config({ path: path.resolve('./config/.env') });
-
-
 
 const { app, startServer } = initiateApp(MainRoutes); //main routes is the routes object that contains all the routes for the application
 
-startServer();
+// On Vercel the exported app is the handler; only listen when running locally
+if (!process.env.VERCEL)
+{
+    startServer();
+}
 
-
-export default app; 
+export default app;

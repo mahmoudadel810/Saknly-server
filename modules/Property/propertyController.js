@@ -1,12 +1,13 @@
 // server/modules/Property/PropertyController.js
 
-import propertyModel, { SaleProperty, RentProperty, StudentProperty } from '../../Model/PropertyModel.js';
+import propertyModel from '../../Model/PropertyModel.js';
 import { AppError, asyncHandler } from '../../middelWares/errorMiddleware.js';
 import { deleteMultipleImages } from '../../services/cloudinary.js';
 import ApiFeatures from '../../utils/apiFeatures.js';
 import sendEmail from '../../services/sendEmail.js';
 import userModel from '../../Model/UserModel.js';
 import Agency from '../../Model/AgencyModel.js';
+import logger from '../../utils/logger.js';
 
 // Translation function for status values
 const translateText = (text) => {
@@ -23,89 +24,150 @@ const translateText = (text) => {
     return translations[text] || text;
 };
 
+// Only approved + active listings are public
+export const PUBLIC_PROPERTY_FILTER = Object.freeze({ isApproved: true, isActive: true });
 
-//=====================================get all properties=====================================
+const clientUrl = () => (process.env.CLIENT_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const isAdmin = (user) => user?.role === 'admin';
+
+const isOwner = (property, user) => !!user && !!property?.owner &&
+    (property.owner._id || property.owner).equals(user._id);
+
+const isPublic = (property) => property.isApproved === true && property.isActive === true;
+
+// Fields a property owner may set. Everything else (owner, agent, views, favorites,
+// approvedBy/At, rejectionReason, isApproved, isActive, slug, inquiries, ...) is ignored.
+const OWNER_EDITABLE_FIELDS = [
+    'title', 'description', 'type', 'price', 'area', 'bedrooms', 'bathrooms', 'floor', 'totalFloors',
+    'location', 'amenities', 'contactInfo', 'isNegotiable', 'isStudentFriendly', 'studentHousingDetails',
+    // sale
+    'deliveryDate', 'deliveryTerms', 'paymentMethod', 'downPayment', 'installmentPeriodInYears',
+    'minInstallmentAmount', 'ownershipType', 'propertyStatus',
+    // rent / student
+    'availableFrom', 'leaseDuration', 'deposit', 'utilities', 'rules',
+];
+const ADMIN_EXTRA_FIELDS = ['agency', 'status'];
+
+const pickPropertyFields = (body = {}, user) =>
+{
+    const allowed = isAdmin(user) ? [...OWNER_EDITABLE_FIELDS, ...ADMIN_EXTRA_FIELDS] : OWNER_EDITABLE_FIELDS;
+    const picked = {};
+    for (const key of allowed)
+    {
+        if (body[key] !== undefined) picked[key] = body[key];
+    }
+    return picked;
+};
+
+const isPlainObject = (value) => value !== null && typeof value === 'object' &&
+    !Array.isArray(value) && !(value instanceof Date) && Object.getPrototypeOf(value) === Object.prototype;
+
+// {location: {city: 'x'}} -> {'location.city': 'x'} so a partial update doesn't wipe sibling fields
+const flattenForUpdate = (obj, prefix = '', out = {}) =>
+{
+    for (const [key, value] of Object.entries(obj))
+    {
+        if (key.startsWith('$')) continue;
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (isPlainObject(value)) flattenForUpdate(value, path, out);
+        else out[path] = value;
+    }
+    return out;
+};
+
+const parseMaybeJson = (value) =>
+{
+    if (typeof value !== 'string') return value;
+    try { return JSON.parse(value); } catch { return value; }
+};
+
+// Remove every reference to a property (agency list, wishlists) and its Cloudinary images.
+// Best effort: failures are logged, never thrown.
+const cleanupPropertyReferences = async (property) =>
+{
+    const id = property._id;
+    const results = await Promise.allSettled([
+        Agency.updateMany({ properties: id }, { $pull: { properties: id } }),
+        userModel.updateMany({ 'wishlist.property': id }, { $pull: { wishlist: { property: id } } }),
+        (async () =>
+        {
+            const ids = (property.images || []).map(img => img.publicId).filter(Boolean);
+            if (ids.length > 0) await deleteMultipleImages(ids);
+        })(),
+    ]);
+    results
+        .filter(r => r.status === 'rejected')
+        .forEach(r => logger.warn(`Property ${id} cleanup step failed: ${r.reason?.message || r.reason}`));
+};
+
+const paginationMeta = (query, totalDocs) =>
+{
+    const currentPage = ApiFeatures.getPage(query);
+    const itemsPerPage = ApiFeatures.getLimit(query);
+    const totalPages = Math.ceil(totalDocs / itemsPerPage);
+    return {
+        currentPage,
+        totalPages,
+        totalDocs,
+        itemsPerPage,
+        hasNext: currentPage < totalPages,
+        hasPrev: currentPage > 1,
+    };
+};
+
+
+//=====================================get all properties (public: approved + active only)=====================================
 export const getAllProperties = asyncHandler(async (req, res, next) =>
 {
-    // Temporarily include pending properties for testing
-    const baseQuery = propertyModel.find({});
+    const filter = ApiFeatures.buildFilter(req.query, PUBLIC_PROPERTY_FILTER);
+    const totalDocs = await propertyModel.countDocuments(filter);
 
-   
-    const countQuery = baseQuery.clone();
-    const countApiFeatures = new ApiFeatures(countQuery, req.query)
+    const dataApiFeatures = new ApiFeatures(propertyModel.find(), req.query, PUBLIC_PROPERTY_FILTER)
         .filter()
-        .search(); 
-
-    const totalDocs = await countApiFeatures.mongooseQuery.countDocuments();
-    const dataApiFeatures = new ApiFeatures(baseQuery, req.query)
-        .filter()
-        .search()
         .sort()
         .limitFields()
         .paginate(); 
 
-
     const properties = await dataApiFeatures.mongooseQuery
-        .populate('owner', 'userName email')
-        .populate('agent', 'userName email');
-
-  
-    if (properties.length === 0 && totalDocs === 0) {
-        return res.status(200).json({
-            success: true,
-            data: [],
-            message: 'No properties found matching your criteria.',
-            pagination: {
-                currentPage: req.query.page * 1 || 1,
-                totalPages: 0,
-                totalDocs: 0,
-                itemsPerPage: req.query.limit * 1 || 10,
-                hasNext: false,
-                hasPrev: false,
-            }
-        });
-    }
-
-    const currentPage = req.query.page * 1 || 1;
-    const itemsPerPage = req.query.limit * 1 || 10;
-    const totalPages = Math.ceil(totalDocs / itemsPerPage); 
+        .populate('owner', 'userName')
+        .populate('agent', 'userName');
 
     res.status(200).json({
         success: true,
         data: properties,
-        message: 'Properties fetched successfully',
-        pagination: {
-            currentPage,
-            totalPages,
-            totalDocs,
-            itemsPerPage,
-            hasNext: currentPage < totalPages,
-            hasPrev: currentPage > 1,
-        }
+        message: totalDocs === 0 ? 'No properties found matching your criteria.' : 'Properties fetched successfully',
+        pagination: paginationMeta(req.query, totalDocs)
     });
 });
 
 
 //=====================================get property details=====================================
-
+// Public for approved+active listings; an unapproved listing is visible only to its owner or an admin
 export const getPropertyDetails = asyncHandler(async (req, res, next) =>
 {
     const { _id } = req.params;
     const property = await propertyModel.findById(_id)
-        .populate('owner', 'userName email phoneNumber')
-        .populate('agent', 'userName email phoneNumber')
-        .populate('approvedBy', 'userName email');
+        .populate('owner', 'userName email phone')
+        .populate('agent', 'userName email phone')
+        .populate('approvedBy', 'userName');
 
-    if (!property)
+    if (!property || (!isPublic(property) && !isOwner(property, req.user) && !isAdmin(req.user)))
     {
-        return res.status(200).json({
-            success: true,
-            data: ['Property not found, try again later'],
-            message: 'Property not found',
-        });
+        return next(new AppError('Property not found', 404));
     }
 
-    await property.incrementViews();
+    if (isPublic(property))
+    {
+        await propertyModel.updateOne({ _id: property._id }, { $inc: { views: 1 } });
+        property.views += 1;
+    }
 
     res.status(200).json({
         success: true,
@@ -117,35 +179,23 @@ export const getPropertyDetails = asyncHandler(async (req, res, next) =>
 //=====================================search properties=====================================
 
 export const searchProperties = asyncHandler(async (req, res, next) => {
-    // Apply API features for filtering, sorting, pagination, etc.
-    const features = new ApiFeatures(propertyModel.find({
-        isApproved: true, 
-        isActive: true    
-    }), req.query)
+    const features = new ApiFeatures(propertyModel.find(), req.query, PUBLIC_PROPERTY_FILTER)
         .filter()
-        .search()
         .sort()
         .limitFields()
-        .search()
         .paginate();
 
     const properties = await features.mongooseQuery
-        .populate('owner', 'userName email')
-        .populate('agent', 'userName email');
-
-    if (properties.length === 0) {
-        return res.status(200).json({
-            success: true,
-            data: ['No properties found with the specified criteria'],
-            message: 'No properties found',
-        });
-    }
+        .populate('owner', 'userName')
+        .populate('agent', 'userName');
 
     res.status(200).json({
         success: true,
         count: properties.length,
         data: properties,
-        message: 'Properties fetched successfully based on search criteria',
+        message: properties.length === 0
+            ? 'No properties found'
+            : 'Properties fetched successfully based on search criteria',
     });
 });
 
@@ -154,91 +204,59 @@ export const searchProperties = asyncHandler(async (req, res, next) => {
 
 export const addProperty = asyncHandler(async (req, res, next) =>
 {
-    console.log('=== ADD PROPERTY DEBUG ===');
-    console.log('Request body:', req.body);
-    console.log('Uploaded files:', req.files);
-    console.log('User:', req.user);
-    console.log('File fieldnames:', req.files ? req.files.map(f => f.fieldname) : 'No files');
-    console.log('All request fields:', Object.keys(req.body || {}));
-    
-    const { category, ...propertyData } = req.body;
+    const { category } = req.body;
     const uploadedFiles = req.files;
 
-    // 2. Validate category
+    // Validate category
     if (!category || !['sale', 'rent', 'student'].includes(category)) {
         return next(new AppError('Invalid property category provided. Must be: sale, rent, or student.', 400));
     }
 
-    // 3. Ensure the user is authenticated
+    // Ensure the user is authenticated
     if (!req.user || !req.user._id)
     {
         return next(new AppError('Authentication error: User ID is missing.', 401));
     }
  
-    // 4. Map uploaded files to the format required by the Property schema
-    console.log('Processing uploaded files:', uploadedFiles);
-    const mediaLinks = (uploadedFiles || []).map(file => {
-        console.log('Processing file:', file);
-        console.log('File fieldname:', file.fieldname);
-        return {
-            publicId: file.public_id, // Corrected from file.filename
-            url: file.path,           // secure_url from Cloudinary
-            isMain: false
-        };
-    });
+    // Map uploaded files to the format required by the Property schema
+    const mediaLinks = (uploadedFiles || []).map(file => ({
+        publicId: file.public_id,
+        url: file.path,           // secure_url from Cloudinary
+        isMain: false
+    }));
 
-    // 5. Designate the first uploaded file as the main image/media
+    // Designate the first uploaded file as the main image/media
     if (mediaLinks.length > 0)
     {
         mediaLinks[0].isMain = true;
     }
 
-    // 6. Create a new property instance with all data
-    let newPropertyData = {
-        ...propertyData,
-        category: category, // Add category to the data
+    // Only whitelisted fields from the body; server-controlled fields are set below
+    const newPropertyData = {
+        ...pickPropertyFields(req.body, req.user),
+        category,
         owner: req.user._id,
         images: mediaLinks,
     };
 
-    // Handle location coordinates if provided
-    if (req.body['location[latitude]'] && req.body['location[longitude]']) {
-        newPropertyData.location = {
-            ...newPropertyData.location,
-            latitude: parseFloat(req.body['location[latitude]']),
-            longitude: parseFloat(req.body['location[longitude]'])
-        };
-    }
-    
-    if (req.user.role === 'user') {
-        newPropertyData.status = 'pending';
-        newPropertyData.isApproved = false;
-        newPropertyData.isActive = false;
-    } else {
-        newPropertyData.status = 'available';
+    if (isAdmin(req.user)) {
+        newPropertyData.status = newPropertyData.status || 'available';
         newPropertyData.isApproved = true;
         newPropertyData.isActive = true;
         newPropertyData.approvedBy = req.user._id;
         newPropertyData.approvedAt = new Date();
+    } else {
+        // Regular users' listings wait for admin approval
+        newPropertyData.status = 'pending';
+        newPropertyData.isApproved = false;
+        newPropertyData.isActive = false;
     }
     
-    // 7. Use the base Property model - Mongoose will automatically use the correct discriminator based on category
-    console.log('Creating property with data:', newPropertyData);
+    // The base model picks the right discriminator from `category`
     const newProperty = new propertyModel(newPropertyData);
+    await newProperty.save();
 
-    // 8. Save the new property to the database
-    console.log('Saving property to database...');
-    try {
-        await newProperty.save();
-        console.log('Property saved successfully:', newProperty._id);
-    } catch (error) {
-        console.error('Error saving property:', error);
-        console.error('Error details:', error.message);
-        console.error('Error stack:', error.stack);
-        throw error;
-    }
-
-    // 9. If property has an agency, push its ID to the agency's properties array
+    // If property has an agency, push its ID to the agency's properties array
     if (newProperty.agency) {
       await Agency.findByIdAndUpdate(newProperty.agency, { $addToSet: { properties: newProperty._id } });
     }
@@ -251,77 +269,101 @@ export const addProperty = asyncHandler(async (req, res, next) =>
 });
 
 //=====================================update property=====================================
-
+// Owner or admin. A non-admin edit sends the listing back to the approval queue (same as create).
 export const updateProperty = asyncHandler(async (req, res, next) =>
 {
     const { id } = req.params;
-    const { _id, category, imagesToDelete, ...updateData } = req.body;
     const newFiles = req.files;
 
-    let property = await propertyModel.findById(id);
+    const property = await propertyModel.findById(id);
     if (!property) return next(new AppError('Property not found', 404));
 
-    if (req.user.role !== 'admin' && req.user.role !== 'agent' !== req.user.id.toString())
+    if (!isOwner(property, req.user) && !isAdmin(req.user))
         return next(new AppError('User is not authorized to update this property', 403));
 
-    let finalImagesList = property.images || [];
+    const previousAgency = property.agency ? property.agency.toString() : null;
+    const previousImageIds = property.images.map(img => img.publicId);
 
-    if (Array.isArray(imagesToDelete) && imagesToDelete.length > 0)
-    {
-        await deleteMultipleImages(imagesToDelete);
-        finalImagesList = finalImagesList.filter(img => !imagesToDelete.includes(img.publicId));
-    }
+    // ---- images
+    const imagesToDeleteRaw = parseMaybeJson(req.body.imagesToDelete);
+    const imagesToDelete = (Array.isArray(imagesToDeleteRaw) ? imagesToDeleteRaw : (imagesToDeleteRaw ? [imagesToDeleteRaw] : []))
+        .map(String)
+        // only images that belong to this property may be deleted
+        .filter(publicId => property.images.some(img => img.publicId === publicId));
+
+    let finalImagesList = property.images
+        .filter(img => !imagesToDelete.includes(img.publicId))
+        .map(img => ({ publicId: img.publicId, url: img.url, alt: img.alt, isMain: img.isMain }));
 
     const newlyUploadedImages = (newFiles || []).map(file => ({
-        publicId: file.public_id, // Corrected from file.filename
+        publicId: file.public_id,
         url: file.path,
         isMain: false,
     }));
 
-    finalImagesList = [...finalImagesList, ...newlyUploadedImages];
-
-    if (Array.isArray(updateData.images))
+    const frontendManagedImages = parseMaybeJson(req.body.images);
+    if (Array.isArray(frontendManagedImages))
     {
-        const frontendManagedImages = updateData.images;
-        const combinedImages = [];
-        const processedIds = new Set();
-
-        newlyUploadedImages.forEach(img =>
-        {
-            combinedImages.push(img);
-            processedIds.add(img.publicId);
-        });
-
+        // Client sends the ordered list of existing images it wants to keep (+ isMain flags)
+        const kept = [];
         frontendManagedImages.forEach(img =>
         {
-            if (img.publicId && !processedIds.has(img.publicId))
+            const dbImg = finalImagesList.find(db => db.publicId === img?.publicId);
+            if (dbImg && !kept.some(k => k.publicId === dbImg.publicId))
             {
-                const dbImg = property.images.find(db => db.publicId === img.publicId);
-                if (dbImg)
-                {
-                    combinedImages.push({
-                        publicId: img.publicId,
-                        url: dbImg.url,
-                        isMain: img.isMain || false,
-                    });
-                }
+                kept.push({ ...dbImg, isMain: img.isMain === true || img.isMain === 'true' });
             }
         });
-
-        finalImagesList = combinedImages;
-        delete updateData.images;
+        finalImagesList = [...newlyUploadedImages, ...kept];
+    }
+    else
+    {
+        finalImagesList = [...finalImagesList, ...newlyUploadedImages];
     }
 
     if (finalImagesList.length > 0 && !finalImagesList.some(img => img.isMain))
     {
         finalImagesList[0].isMain = true;
     }
-    updateData.images = finalImagesList;
 
-    property = await propertyModel.findByIdAndUpdate(id, updateData, {
-        new: true,
-        runValidators: true,
-    });
+    // ---- fields (category can't change: it selects the schema)
+    const updates = flattenForUpdate(pickPropertyFields(req.body, req.user));
+    property.set(updates);
+    property.images = finalImagesList;
+
+    if (!isAdmin(req.user))
+    {
+        property.status = 'pending';
+        property.isApproved = false;
+        property.isActive = false;
+        property.approvedBy = undefined;
+        property.approvedAt = undefined;
+    }
+
+    await property.save();
+
+    // Keep agency.properties[] in sync when an admin moves the listing
+    const currentAgency = property.agency ? property.agency.toString() : null;
+    if (previousAgency !== currentAgency)
+    {
+        if (previousAgency) await Agency.updateOne({ _id: previousAgency }, { $pull: { properties: property._id } });
+        if (currentAgency) await Agency.updateOne({ _id: currentAgency }, { $addToSet: { properties: property._id } });
+    }
+
+    // Remove dropped images from Cloudinary only after the DB update succeeded
+    const keptIds = new Set(property.images.map(img => img.publicId));
+    const removedIds = previousImageIds.filter(publicId => publicId && !keptIds.has(publicId));
+    if (removedIds.length > 0)
+    {
+        try
+        {
+            await deleteMultipleImages(removedIds);
+        }
+        catch (error)
+        {
+            logger.warn(`Failed to delete images of property ${property._id}: ${error.message}`);
+        }
+    }
 
     res.status(200).json({
         success: true,
@@ -331,7 +373,7 @@ export const updateProperty = asyncHandler(async (req, res, next) =>
 });
 
 //=====================================delete property================================================
-
+// Owner or admin
 export const deleteProperty = asyncHandler(async (req, res, next) =>
 {
     const { id } = req.params;
@@ -339,21 +381,13 @@ export const deleteProperty = asyncHandler(async (req, res, next) =>
 
     if (!property) return next(new AppError('Property not found', 404));
 
-    if (req.user.role !== 'admin' && req.user.role !== 'agent' !== req.user.id.toString())
+    if (!isOwner(property, req.user) && !isAdmin(req.user))
         return next(new AppError('User is not authorized to delete this property', 403));
 
-    if (property.images?.length > 0)
-    {
-        const idsToDelete = property.images.map(img => img.publicId);
-        await deleteMultipleImages(idsToDelete);
-    }
-
-    // Remove property ID from agency's properties array if it has an agency
-    if (property.agency) {
-      await Agency.findByIdAndUpdate(property.agency, { $pull: { properties: property._id } });
-    }
-
     await property.deleteOne();
+
+    // Remove from agency properties[] and users' wishlists; delete Cloudinary images (best effort)
+    await cleanupPropertyReferences(property);
 
     res.status(200).json({
         success: true,
@@ -363,14 +397,14 @@ export const deleteProperty = asyncHandler(async (req, res, next) =>
 
 //=====================================get most viewed properties=====================================
 
-// get most viewed properties (for home page)
+// get most viewed properties (for home page) - public listings only
 export const getMostViewedProperties = asyncHandler(async (req, res, next) =>
 {
-    const properties = await propertyModel.find({})
+    const properties = await propertyModel.find(PUBLIC_PROPERTY_FILTER)
         .sort({ views: -1 })
         .limit(10)
-        .populate('owner', 'userName email')
-        .populate('agent', 'userName email');
+        .populate('owner', 'userName')
+        .populate('agent', 'userName');
 
     if (properties.length === 0)
     {
@@ -383,12 +417,11 @@ export const getMostViewedProperties = asyncHandler(async (req, res, next) =>
 
     const processedProperties = properties.map(property => {
         const propertyObject = property.toObject();
-        // Property types are already in Arabic in the model, so no translation needed
         // Translate status to Arabic
         if (propertyObject.status) {
             propertyObject.status = translateText(propertyObject.status);
         }
-        propertyObject.sliderImages = propertyObject.images.map(img => img.url);
+        propertyObject.sliderImages = (propertyObject.images || []).map(img => img.url);
         return propertyObject;
     });
 
@@ -399,23 +432,16 @@ export const getMostViewedProperties = asyncHandler(async (req, res, next) =>
         message: 'Most viewed active and approved properties fetched successfully',
     });
 });
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
-//===================================== طبعا يا حودا عاوز تمسح الكلام دا كله امسحه :) =====================================
 
 //=====================================get all pending properties (admin)=====================================
 export const getPendingProperties = asyncHandler(async (req, res, next) => {
     const { category } = req.query; // category: sale, rent, student
     const filter = { status: 'pending' };
-    if (category) {
+    if (typeof category === 'string' && ['sale', 'rent', 'student'].includes(category)) {
         filter.category = category;
     }
     const properties = await propertyModel.find(filter)
+        .sort({ createdAt: -1 })
         .populate('owner', 'userName email')
         .populate('agent', 'userName email');
     res.status(200).json({
@@ -429,42 +455,27 @@ export const getPendingProperties = asyncHandler(async (req, res, next) => {
 //=====================================approve property (admin)=====================================
 export const approveProperty = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
-    const { status, isActive, isApproved } = req.body; // Get data from request body
-    
-    console.log('Approve Property Request:', {
-        id,
-        body: req.body,
-        status,
-        isActive,
-        isApproved
-    });
-    
+    const { status, isActive, isApproved } = req.body;
+
     const property = await propertyModel.findById(id).populate('owner', 'email userName');
     if (!property) return next(new AppError('Property not found', 404));
-    
-    // Update property with the provided data
-    property.status = status || 'available';
-    property.isActive = isActive !== undefined ? isActive : true;
-    property.isApproved = isApproved !== undefined ? isApproved : true;
-    property.approvedBy = req.user?._id || null; // Safe access with fallback
+
+    const allowedStatuses = ['available', 'rented', 'sold', 'pending', 'inactive'];
+    property.status = allowedStatuses.includes(status) ? status : 'available';
+    property.isActive = typeof isActive === 'boolean' ? isActive : true;
+    property.isApproved = typeof isApproved === 'boolean' ? isApproved : true;
+    property.approvedBy = req.user._id;
     property.approvedAt = new Date();
+    property.rejectionReason = undefined;
     await property.save();
-    
-    console.log('Property updated successfully:', {
-        id: property._id,
-        status: property.status,
-        isActive: property.isActive,
-        isApproved: property.isApproved
-    });
-    
-    // Send email to owner
-   // Send email to owner
-if (property.contactInfo && property.contactInfo.email) {
-    console.log('Sending approval email to:', property.contactInfo.email);
-    const emailed = await sendEmail({
-        to: property.contactInfo.email,
-        subject: 'تمت الموافقة على عقارك - سكنلي',
-        message: `
+
+    // Notify the owner (best effort)
+    if (property.contactInfo && property.contactInfo.email) {
+        try {
+            await sendEmail({
+                to: property.contactInfo.email,
+                subject: 'تمت الموافقة على عقارك - سكنلي',
+                message: `
             <!DOCTYPE html>
             <html lang="ar" dir="rtl">
             <head>
@@ -758,13 +769,13 @@ if (property.contactInfo && property.contactInfo.email) {
                         
                         <div class="info-card">
                             <p>
-                                مرحباً <strong>${property.contactInfo.name || 'عزيزي العميل'}</strong>،
+                                مرحباً <strong>${escapeHtml(property.contactInfo.name) || 'عزيزي العميل'}</strong>،
                             </p>
                             <p>
                                 تمت الموافقة على عقارك بعنوان:
                             </p>
                             <div class="property-title">
-                                <h3>${property.title}</h3>
+                                <h3>${escapeHtml(property.title)}</h3>
                             </div>
                         </div>
                         
@@ -778,7 +789,7 @@ if (property.contactInfo && property.contactInfo.email) {
                         </div>
                         
                         <div class="cta-section">
-                            <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}" class="cta-button">
+                            <a href="${clientUrl()}" class="cta-button">
                                 تصفح المنصة
                             </a>
                         </div>
@@ -793,16 +804,11 @@ if (property.contactInfo && property.contactInfo.email) {
             </body>
             </html>
         `
-    });
-
-    if (!emailed) {
-        console.error('Failed to send approval email to:', property.contactInfo.email);
-    } else {
-        console.log('Approval email sent successfully to:', property.contactInfo.email);
+            });
+        } catch (error) {
+            logger.warn(`Approval email for property ${property._id} failed: ${error.message}`);
+        }
     }
-} else {
-    console.log('No contact info found for property:', property._id);
-}
 
     res.status(200).json({
         success: true,
@@ -814,17 +820,18 @@ if (property.contactInfo && property.contactInfo.email) {
 //=====================================deny property (admin)=====================================
 export const denyProperty = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
-    const { reason } = req.query; // Get reason from query parameters instead of body
+    const reason = typeof req.query.reason === 'string' ? req.query.reason.slice(0, 500) : ''; // reason comes from the query string
     
     const property = await propertyModel.findById(id).populate('owner', 'email userName');
     if (!property) return next(new AppError('Property not found', 404));
     
-    // Send email to owner before deleting
+    // Send email to owner before deleting (best effort)
     if (property.contactInfo && property.contactInfo.email) {
-        const emailed = await sendEmail({
-            to: property.contactInfo.email,
-            subject: 'تحديث بخصوص عقارك',
-            message: `
+        try {
+            await sendEmail({
+                to: property.contactInfo.email,
+                subject: 'تحديث بخصوص عقارك',
+                message: `
                 <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
                     
                     <!-- Header -->
@@ -845,20 +852,20 @@ export const denyProperty = asyncHandler(async (req, res, next) => {
                         
                         <div style="background-color: #f8f9fa; border-radius: 8px; padding: 25px; margin-bottom: 25px;">
                             <p style="color: #2c3e50; line-height: 1.6; margin-bottom: 20px; font-size: 16px;">
-                                مرحباً <strong>${property.contactInfo.name || ''}</strong>،
+                                مرحباً <strong>${escapeHtml(property.contactInfo.name)}</strong>،
                             </p>
                             <p style="color: #2c3e50; line-height: 1.6; margin-bottom: 20px; font-size: 16px;">
                                 نعتذر، لم يتم قبول عقارك بعنوان:
                             </p>
                             <div style="background-color: #ffffff; border-left: 4px solid #ff6b6b; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-                                <h3 style="color: #2c3e50; margin: 0; font-size: 18px; font-weight: 600;">${property.title}</h3>
+                                <h3 style="color: #2c3e50; margin: 0; font-size: 18px; font-weight: 600;">${escapeHtml(property.title)}</h3>
                             </div>
                         </div>
                         
                         <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); border-radius: 8px; padding: 25px; text-align: center; margin-bottom: 25px;">
                             <h3 style="color: #ffffff; margin: 0 0 15px 0; font-size: 20px; font-weight: 600;">سبب الرفض:</h3>
                             <div style="background-color: rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 20px; margin: 15px 0;">
-                                <p style="color: #ffffff; margin: 0; font-size: 16px; line-height: 1.6;">${reason || 'غير محدد'}</p>
+                                <p style="color: #ffffff; margin: 0; font-size: 16px; line-height: 1.6;">${escapeHtml(reason) || 'غير محدد'}</p>
                             </div>
                         </div>
                         
@@ -873,7 +880,7 @@ export const denyProperty = asyncHandler(async (req, res, next) => {
                         </div>
                         
                         <div style="text-align: center; margin: 30px 0;">
-                            <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/uploadProperty" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; display: inline-block; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+                            <a href="${clientUrl()}/uploadProperty" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; display: inline-block; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
                                 إضافة عقار جديد
                             </a>
                         </div>
@@ -886,15 +893,15 @@ export const denyProperty = asyncHandler(async (req, res, next) => {
                     </div>
                 </div>
             `
-        });
-
-        if (!emailed) {
-            console.error('Failed to send rejection email to:', property.contactInfo.email);
+            });
+        } catch (error) {
+            logger.warn(`Rejection email for property ${property._id} failed: ${error.message}`);
         }
     }
     
-    // Delete the property from database
-    await propertyModel.findByIdAndDelete(id);
+    // Delete the property and every reference to it (agency, wishlists, images)
+    await propertyModel.deleteOne({ _id: property._id });
+    await cleanupPropertyReferences(property);
     
     res.status(200).json({
         success: true,
@@ -909,6 +916,7 @@ export const getUserProperties = asyncHandler(async (req, res, next) => {
         return next(new AppError('Authentication error: User ID is missing.', 401));
     }
     const properties = await propertyModel.find({ owner: req.user._id })
+        .sort({ createdAt: -1 })
         .populate('owner', 'userName email')
         .populate('agent', 'userName email');
     res.status(200).json({
@@ -928,12 +936,16 @@ export const getSimilarProperties = asyncHandler(async (req, res, next) => {
     }
     const priceMin = currentProperty.price * 0.8;
     const priceMax = currentProperty.price * 1.2;
-    // اجلب كل العقارات الفعالة والمعتمدة باستثناء العقار الحالي
+    // public candidates sharing at least the city, the type or the price band
     const all = await propertyModel.find({
-        _id: { $ne: id },
-        isApproved: true,
-        isActive: true
-    });
+        _id: { $ne: currentProperty._id },
+        $or: [
+            { 'location.city': currentProperty.location?.city },
+            { type: currentProperty.type },
+            { price: { $gte: priceMin, $lte: priceMax } },
+        ],
+        ...PUBLIC_PROPERTY_FILTER,
+    }).limit(200);
     // احسب درجة التشابه لكل عقار
     const scored = all.map(p => {
         let score = 0;
@@ -953,32 +965,22 @@ export const getSimilarProperties = asyncHandler(async (req, res, next) => {
 
 //=====================================favorites/wishlist functions=====================================
 
-// Add property to favorites
+// Add property to favorites (public listings only)
 export const addToFavorites = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user._id;
 
-    const property = await propertyModel.findById(id);
-    if (!property) {
+    const property = await propertyModel.findById(id).select('isApproved isActive');
+    if (!property || !isPublic(property)) {
         return next(new AppError('Property not found', 404));
     }
 
-    // Add user to property favorites
-    await property.addToFavorites(userId);
-
-    // Add property to user wishlist
-    const user = await userModel.findById(userId);
-    const existingWishlistItem = user.wishlist.find(item => 
-        item.property.toString() === id
+    // Atomic updates: no lost writes when requests overlap
+    await propertyModel.updateOne({ _id: property._id }, { $addToSet: { favorites: userId } });
+    await userModel.updateOne(
+        { _id: userId, 'wishlist.property': { $ne: property._id } },
+        { $push: { wishlist: { property: property._id, addedAt: new Date() } } }
     );
-
-    if (!existingWishlistItem) {
-        user.wishlist.push({
-            property: id,
-            addedAt: new Date()
-        });
-        await user.save();
-    }
 
     res.status(200).json({
         success: true,
@@ -992,20 +994,13 @@ export const removeFromFavorites = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user._id;
 
-    const property = await propertyModel.findById(id);
+    const property = await propertyModel.findById(id).select('_id');
     if (!property) {
         return next(new AppError('Property not found', 404));
     }
 
-    // Remove user from property favorites
-    await property.removeFromFavorites(userId);
-
-    // Remove property from user wishlist
-    const user = await userModel.findById(userId);
-    user.wishlist = user.wishlist.filter(item => 
-        item.property.toString() !== id
-    );
-    await user.save();
+    await propertyModel.updateOne({ _id: property._id }, { $pull: { favorites: userId } });
+    await userModel.updateOne({ _id: userId }, { $pull: { wishlist: { property: property._id } } });
 
     res.status(200).json({
         success: true,
@@ -1019,9 +1014,9 @@ export const checkFavoriteStatus = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user._id;
 
-    const user = await userModel.findById(userId);
-    const isFavorite = user.wishlist.some(item => 
-        item.property.toString() === id
+    const user = await userModel.findById(userId).select('wishlist');
+    const isFavorite = !!user?.wishlist?.some(item =>
+        item?.property && item.property.toString() === id
     );
 
     res.status(200).json({

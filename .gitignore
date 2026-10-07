@@ -2,3 +2,10 @@
 config/.env
 node_modules/
 logs/
+.vercel
+.env*
+
+# local deploy config
+.vercel
+.env*
+.DS_Store

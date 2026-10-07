@@ -3,13 +3,29 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
-import dotenv from 'dotenv';
-import path from 'path';
-import connectDB from '../../DB/connection.js';
+import connectDB, { ensureDbConnection, getDbState } from '../../DB/connection.js';
 import { apiLimiter } from '../rateLimiter.js';
 
 // Import middleware
 import { errorHandler, notFound } from '../../middelWares/errorMiddleware.js';
+
+const trimSlash = (url) => (url || '').trim().replace(/\/+$/, '');
+
+// Allowed browser origins: defaults + CLIENT_URL + comma-separated CORS_ORIGINS
+const buildAllowedOrigins = () =>
+{
+    const fromEnv = (process.env.CORS_ORIGINS || '')
+        .split(',')
+        .map(trimSlash)
+        .filter(Boolean);
+
+    return [
+        'http://localhost:3000',
+        'https://saknly-ruddy.vercel.app',
+        trimSlash(process.env.CLIENT_URL),
+        ...fromEnv
+    ].filter(Boolean);
+};
 
 /**
  * Initialize express application with all middleware and configurations
@@ -18,54 +34,52 @@ import { errorHandler, notFound } from '../../middelWares/errorMiddleware.js';
  */
 const initiateApp = (routes = {}) =>
 {
-    dotenv.config({ path: path.resolve('./config/.env') });
-
     const app = express();
     const PORT = process.env.PORT || 5000;
 
+    // Behind Vercel's proxy: use X-Forwarded-For for req.ip (rate limiting)
+    app.set('trust proxy', 1);
 
-    connectDB();
+    // Warm up the DB connection; failures are handled per request by ensureDbConnection
+    connectDB().catch(() => { });
 
-    // Security middleware ,search for what u can prevent in docs for more security.
-
+    // Security middleware
     app.use(helmet({
         crossOriginResourcePolicy: { policy: "cross-origin" }
+    }));
+
+    // CORS configuration (before the rate limiter so 429 responses still carry CORS headers)
+    const allowedOrigins = buildAllowedOrigins();
+    app.use(cors({
+        origin: function (origin, callback)
+        {
+            // Allow requests with no origin (like mobile apps or curl requests)
+            if (!origin) return callback(null, true);
+
+            // Disallowed origins get no CORS headers (browser blocks), not a 500
+            return callback(null, allowedOrigins.includes(trimSlash(origin)));
+        },
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'Content-Length']
     }));
 
     // Rate limiting
     app.use(apiLimiter);
 
-    // CORS configuration
-    app.use(cors({
-        origin: function (origin, callback) {
-            // Allow requests with no origin (like mobile apps or curl requests)
-            if (!origin) return callback(null, true);
-            
-            const allowedOrigins = [
-                'http://localhost:3000',
-                'https://saknly-ruddy.vercel.app',
-                process.env.CLIENT_URL
-            ].filter(Boolean); // Remove any undefined values
-            
-            if (allowedOrigins.indexOf(origin) !== -1) {
-                callback(null, true);
-            } else {
-                console.log('CORS blocked origin:', origin);
-                callback(new Error('Not allowed by CORS'));
-            }
-        },
-        credentials: true,
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS','PATCH'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'Content-Length']
-    }));
-
-
     // parsing 
-    app.use(express.json({ limit: '10mb' }));
-    app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+    app.use(express.json({ limit: '1mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+    // Express 5 leaves req.body undefined when no parser matched
+    app.use((req, res, next) =>
+    {
+        if (req.body === undefined) req.body = {};
+        next();
+    });
 
     // Compression middleware
-    app.use(compression()); // compress the response to reduce the size of the response for faster loading  ليفل من ١-٩ 
+    app.use(compression());
 
     // Logging middleware
     if (process.env.NODE_ENV === 'development')
@@ -76,24 +90,14 @@ const initiateApp = (routes = {}) =>
         app.use(morgan('combined'));
     }
 
-    
-    //check if the server is running
+
+    //check if the server is running (reports DB state, never 503)
     app.get('/api/saknly/v1/health', (req, res) =>
     {
         res.status(200).json({
             success: true,
             message: 'Saknly API is running!',
-            timestamp: new Date().toISOString(),
-            availableRoutes: routes
-        });
-    });
-
-    // Test route to verify the app is working
-    app.get('/api/saknly/v1/test', (req, res) => {
-        console.log('=== APP TEST ROUTE HIT ===');
-        res.json({ 
-            message: 'App is working',
-            routes: Object.keys(routes || {}),
+            db: getDbState(),
             timestamp: new Date().toISOString()
         });
     });
@@ -110,6 +114,9 @@ const initiateApp = (routes = {}) =>
         });
     });
 
+    // Every API route below needs the database
+    app.use('/api/saknly/v1', ensureDbConnection);
+
     // Register all route modules
     if (routes)
     {
@@ -117,12 +124,7 @@ const initiateApp = (routes = {}) =>
         {
             if (routes[key].path && routes[key].router)
             {
-                console.log(`Registering route: ${routes[key].path}`);
-                console.log(`Route key: ${key}`);
-                console.log(`Route path: ${routes[key].path}`);
-                console.log(`Route router type: ${typeof routes[key].router}`);
                 app.use(routes[key].path, routes[key].router);
-                console.log(`Route registered successfully: ${routes[key].path}`);
             }
         });
     }

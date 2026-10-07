@@ -1,12 +1,10 @@
 import express from 'express';
 import { getAdminAnalytics } from './adminController.js';
-import { protect, authorize } from '../../middelWares/authMiddleware.js';
+import { protect, admin } from '../../middelWares/authMiddleware.js';
 
 const router = express.Router();
 
-// GET /api/admin/analytics
-// we must add protected
-router.get('/analytics', getAdminAnalytics);
-// router.get('/analytics', protect , authorize('admin'),  getAdminAnalytics);
+// GET /api/saknly/v1/admin/analytics (admin only)
+router.get('/analytics', protect, admin, getAdminAnalytics);
 
-export default router; 
+export default router;

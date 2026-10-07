@@ -1,12 +1,11 @@
 import Property from '../../Model/PropertyModel.js';
 import Agency from '../../Model/AgencyModel.js';
-import genAI from './geminiClient.js';
+import { getGeminiModel } from './geminiClient.js';
 
-const geminiModel = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash" });
+// Only listings that are visible publicly may be used as chatbot context
+const PUBLIC_FILTER = { isApproved: true, isActive: true };
 
-// const result = await geminiModel.generateContent("ما هو موقع سكّنلي؟");
-// const response = await result.response;
-// console.log(response.text());
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export const smartAskWithRAG = async (userQuestion) => {
   const normalized = userQuestion.toLowerCase().trim();
@@ -38,6 +37,8 @@ export const smartAskWithRAG = async (userQuestion) => {
   }
 
 
+
+  const geminiModel = getGeminiModel();
 
   // ✅ التصنيف باستخدام Gemini
   const classificationPrompt = `
@@ -74,8 +75,8 @@ export const smartAskWithRAG = async (userQuestion) => {
   }
 
   if (category === 'price-range') {
-    const allProperties = await Property.find({ isApproved: true, isActive: true });
-    const allCities = await Property.distinct("location.city");
+    const allProperties = await Property.find(PUBLIC_FILTER).select('category type price location');
+    const allCities = await Property.distinct("location.city", PUBLIC_FILTER);
 
     const isRent = normalized.includes("إيجار") || normalized.includes("rent");
     const isSale = normalized.includes("بيع") || normalized.includes("sale");
@@ -107,16 +108,15 @@ export const smartAskWithRAG = async (userQuestion) => {
   }
 
   if (category === 'property') {
-    const allCities = await Property.distinct("location.city");
+    const allCities = await Property.distinct("location.city", PUBLIC_FILTER);
     const matchedCity = allCities.find(city => city && normalized.includes(city.toLowerCase()));
 
     const filter = {
-      isApproved: true,
-      isActive: true,
+      ...PUBLIC_FILTER,
       ...(matchedCity && { "location.city": matchedCity }),
     };
 
-    const properties = await Property.find(filter).select('type title location address price description');
+    const properties = await Property.find(filter).select('type title location price description').limit(30);
 
     if (properties.length === 0) {
       return `❌ لا توجد عقارات متاحة حالياً ${matchedCity ? `في ${matchedCity}` : 'في المنطقة المطلوبة'}.`;
@@ -140,22 +140,23 @@ export const smartAskWithRAG = async (userQuestion) => {
 
   if (/(سكن طلاب|سكن مغتربين|سكن جامعي|سكن للطلبة|سكن بالقرب من|سكن بجوار|قريب من الكلية|سكن للجامعة)/i.test(normalized)) {
     const filter = {
-      isApproved: true,
-      isActive: true,
+      ...PUBLIC_FILTER,
       isStudentFriendly: true
     };
 
-    const allCities = await Property.distinct("location.city");
+    const allCities = await Property.distinct("location.city", PUBLIC_FILTER);
     const matchedCity = allCities.find(city => city && normalized.includes(city.toLowerCase()));
 
     if (matchedCity) {
       filter["location.city"] = matchedCity;
     } else {
       const addressKeywords = normalized.split(" ").filter(w => w.length > 2);
-      filter["location.address"] = { $regex: addressKeywords.join("|"), $options: "i" };
+      if (addressKeywords.length > 0) {
+        filter["location.address"] = { $regex: addressKeywords.map(escapeRegex).join("|"), $options: "i" };
+      }
     }
 
-    const properties = await Property.find(filter).select("title location address price description");
+    const properties = await Property.find(filter).select("title location price description").limit(30);
 
     if (properties.length === 0) {
       return `❌ لم أتمكن من العثور على سكن طلاب مطابق في المنطقة المطلوبة. حاول استخدام اسم مدينة أو شارع آخر.`;

@@ -1,41 +1,10 @@
 import User from "../../Model/UserModel.js";
 import { asyncHandler, AppError } from "../../middelWares/errorMiddleware.js";
-import { validation } from '../../middelWares/validation.js';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import Property from '../../Model/PropertyModel.js';
 
-//=========================Register User====================================
-export const registerUser = asyncHandler(async (req, res, next) => {
-    const { userName, email, password, phone, address } = req.body;
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-        return next(new AppError("Email already exists", 400));
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = await User.create({
-        userName,
-        email,
-        password: hashedPassword,
-        phone,
-        address,
-    });
-
-    const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN,
-    });
-
-    res.status(201).json({
-        success: true,
-        message: 'User registered successfully',
-        data: {
-            user: newUser,
-            token
-        }
-    });
-});
+const sameProperty = (item, propertyId) => !!item?.property && item.property.toString() === propertyId;
 
 //=========================Get All Users====================================
 export const getUsers = asyncHandler(async (req, res, next) => {
@@ -43,17 +12,18 @@ export const getUsers = asyncHandler(async (req, res, next) => {
     
     // Build filter for search
     const filter = {};
-    if (search) {
+    if (search && typeof search === 'string') {
+        const safeSearch = escapeRegex(search.slice(0, 100));
         filter.$or = [
-            { userName: { $regex: search, $options: 'i' } },
-            { email: { $regex: search, $options: 'i' } },
-            { firstName: { $regex: search, $options: 'i' } },
-            { lastName: { $regex: search, $options: 'i' } }
+            { userName: { $regex: safeSearch, $options: 'i' } },
+            { email: { $regex: safeSearch, $options: 'i' } },
+            { firstName: { $regex: safeSearch, $options: 'i' } },
+            { lastName: { $regex: safeSearch, $options: 'i' } }
         ];
     }
 
-    const currentPage = parseInt(page, 10) || 1;
-    const itemsPerPage = parseInt(limit, 10) || 20;
+    const currentPage = Math.max(parseInt(page, 10) || 1, 1);
+    const itemsPerPage = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
     const skip = (currentPage - 1) * itemsPerPage;
 
     // Get total count
@@ -172,7 +142,6 @@ export const addToWishlist = asyncHandler(async (req, res, next) => {
     const userId = req.user._id;
 
     // Check if property exists
-    const Property = (await import('../../Model/PropertyModel.js')).default;
     const property = await Property.findById(propertyId);
     if (!property) {
         return next(new AppError("Property not found", 404));
@@ -184,9 +153,7 @@ export const addToWishlist = asyncHandler(async (req, res, next) => {
     }
 
     // Check if property is already in wishlist
-    const existingItem = user.wishlist.find(item => 
-        item.property.toString() === propertyId
-    );
+    const existingItem = user.wishlist.find(item => sameProperty(item, propertyId));
 
     if (existingItem) {
         return res.status(200).json({
@@ -221,10 +188,8 @@ export const removeFromWishlist = asyncHandler(async (req, res, next) => {
         return next(new AppError("User not found", 404));
     }
 
-    // Remove from wishlist
-    user.wishlist = user.wishlist.filter(item => 
-        item.property.toString() !== propertyId
-    );
+    // Remove from wishlist (also drops entries whose property no longer exists)
+    user.wishlist = user.wishlist.filter(item => item?.property && !sameProperty(item, propertyId));
 
     await user.save();
 

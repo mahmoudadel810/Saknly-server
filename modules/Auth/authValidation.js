@@ -5,17 +5,15 @@ import joi from "joi";
 
 export const registerValidator = {
     body: joi.object({
-        firstName : joi.string(),
-        lastName : joi.string(),
-        userName: joi.string().required().messages({
+        firstName : joi.string().trim().max(20).allow(''),
+        lastName : joi.string().trim().max(20).allow(''),
+        userName: joi.string().trim().min(3).max(30).required().messages({
             "string.base": "your name must be string",
             "any.required": "please enter your name"
         }),
         email: joi.string()
-            .email({
-                maxDomainSegments: 2, // allowed dots in email .. ex dola.com.net نقطتين فقط
-                tlds: { allow: ["com", "net"] }
-            })
+            .trim()
+            .email({ tlds: { allow: false } })
             .required()
             .messages({
                 "string.email": "please enter a valid format"
@@ -39,7 +37,7 @@ export const registerValidator = {
             .messages({
                 "string.pattern.base": "الرجاء إدخال رقم هاتف صحيح مكون من 11 رقم يبدأ بـ 01"
             }),
-        address: joi.string().required().messages({
+        address: joi.string().trim().max(200).required().messages({
             "any.required": "please enter your address"
         }),
     })
@@ -51,13 +49,11 @@ export const loginValidator = {
         .required()
         .keys({
             email: joi.string()
-                .email({
-                    maxDomainSegments: 3,
-                    tlds: { allow: ["com", "net"] }
-                })
+                .trim()
+                .email({ tlds: { allow: false } })
                 .required()
                 .messages({
-                    "string.email": "please enter a valid format eg .. [ .Com , .net ]"
+                    "string.email": "please enter a valid email"
                 }),
             password: joi.string()
                 .required()
@@ -74,7 +70,11 @@ export const loginValidator = {
 
 export const verifyResetValidator = {
     body: joi.object().keys({
-        code: joi.string().required().messages({
+        email: joi.string().trim().email({ tlds: { allow: false } }).required().messages({
+            "string.email": "please enter a valid email",
+            "any.required": "email is required"
+        }),
+        code: joi.string().trim().required().messages({
             "object.unknown": "Code Sent to your Gmail Does Not Match"
         }),
         newPassword: joi.string()
@@ -89,6 +89,16 @@ export const verifyResetValidator = {
             }),
         confirmNewPassword: joi.string().required().valid(joi.ref("newPassword")).messages({
             "any.only": "Must Match New password "
+        }),
+    })
+};
+
+//=========================email only (forgot-password / resend-confirmation)====================================
+export const emailOnlyValidator = {
+    body: joi.object().keys({
+        email: joi.string().trim().email({ tlds: { allow: false } }).required().messages({
+            "string.email": "please enter a valid email",
+            "any.required": "email is required"
         }),
     })
 };
