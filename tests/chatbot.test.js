@@ -43,3 +43,15 @@ describe('POST /chat', () =>
         expect(ok.body.answer).not.toContain(GREETING_MARKER);
     });
 });
+
+describe('chatbot contact reply', () =>
+{
+    it('gives Saknly\'s current phone and email', async () =>
+    {
+        generateContent.mockResolvedValueOnce(reply('contact'));
+        const answer = await smartAskWithRAG('how can I contact you');
+        expect(answer).toContain('+20 101 285 2525');
+        expect(answer).toContain('ma.adel.810@gmail.com');
+        expect(answer).not.toContain('01097558591');
+    });
+});

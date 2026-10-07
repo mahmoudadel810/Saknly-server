@@ -2,6 +2,12 @@ import Property from '../../Model/PropertyModel.js';
 import Agency from '../../Model/AgencyModel.js';
 import { getGeminiModel } from './geminiClient.js';
 
+// Public contact details for Saknly, shown by the chatbot
+const SAKNLY_CONTACT = {
+  phone: process.env.SAKNLY_CONTACT_PHONE || '+20 101 285 2525',
+  email: process.env.SAKNLY_CONTACT_EMAIL || 'ma.adel.810@gmail.com',
+};
+
 // Only listings that are visible publicly may be used as chatbot context
 const PUBLIC_FILTER = { isApproved: true, isActive: true };
 
@@ -62,18 +68,17 @@ export const smartAskWithRAG = async (userQuestion) => {
   const category = (await categoryResult.response.text()).trim().toLowerCase();
 
   if (category === 'submit') {
-    return `لرفع العقار الخاص بك على موقع سكنلي: 
-- يجب إنشاء حساب وتسجيل الدخول.
-- ثم الضغط على زر "أضف عقارك".
-- سيتم مراجعة العقار خلال ساعات قبل النشر.
-تابع حالة العقار من صفحتك الشخصية على الموقع.`;
+    return `لنشر عقارك على سكنلي:
+- سجّل الدخول إلى حسابك، أو أنشئ حسابًا جديدًا.
+- اضغط على "أضف عقارك" وأكمل بيانات الإعلان.
+- يراجع فريقنا الإعلان قبل نشره، وتتابع حالته من صفحة حسابك.`;
   }
 
   if (category === 'contact') {
-    return `للتواصل معنا 📞:
-- الهاتف: 01097558591
-- البريد الإلكتروني: tasbih.attia@gmail.com
-نحن دائمًا في خدمتك.`;
+    return `للتواصل مع فريق سكنلي:
+- الهاتف وواتساب: ${SAKNLY_CONTACT.phone}
+- البريد الإلكتروني: ${SAKNLY_CONTACT.email}
+يسعدنا الرد على استفسارك.`;
   }
 
   if (category === 'price-range') {
