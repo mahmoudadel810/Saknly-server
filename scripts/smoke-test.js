@@ -1,6 +1,6 @@
 // Smoke test that needs no database: boots the app the way Vercel does and checks
 // that it imports cleanly, reports DB state on /health and degrades to 503 JSON.
-//   npm test
+//   npm run test:smoke
 import assert from 'node:assert/strict';
 import http from 'node:http';
 

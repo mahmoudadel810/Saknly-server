@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "node scripts/smoke-test.js",
-    "seed": "node utils/seed.js"
+    "test": "vitest run",
+    "seed": "node utils/seed.js",
+    "test:smoke": "node scripts/smoke-test.js"
   },
   "keywords": [
     "real-estate",
@@ -42,6 +43,9 @@
     "winston": "^3.17.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "mongodb-memory-server": "^11.3.0",
+    "nodemon": "^3.1.10",
+    "supertest": "^7.3.0",
+    "vitest": "^4.1.11"
   }
 }
