@@ -2,7 +2,7 @@
 
 import propertyModel from '../../Model/PropertyModel.js';
 import { AppError, asyncHandler } from '../../middelWares/errorMiddleware.js';
-import { deleteMultipleImages } from '../../services/cloudinary.js';
+import { deleteMediaAssets } from '../../services/cloudinary.js';
 import ApiFeatures from '../../utils/apiFeatures.js';
 import sendEmail from '../../services/sendEmail.js';
 import userModel from '../../Model/UserModel.js';
@@ -103,8 +103,8 @@ const cleanupPropertyReferences = async (property) =>
         PropertyInquiry.deleteMany({ property: id }),
         (async () =>
         {
-            const ids = (property.images || []).map(img => img.publicId).filter(Boolean);
-            if (ids.length > 0) await deleteMultipleImages(ids);
+            const media = (property.images || []).filter(img => img.publicId);
+            if (media.length > 0) await deleteMediaAssets(media);
         })(),
     ]);
     results
@@ -287,7 +287,7 @@ export const updateProperty = asyncHandler(async (req, res, next) =>
         return next(new AppError('User is not authorized to update this property', 403));
 
     const previousAgency = property.agency ? property.agency.toString() : null;
-    const previousImageIds = property.images.map(img => img.publicId);
+    const previousImages = property.images.map(img => ({ publicId: img.publicId, url: img.url }));
 
     // ---- images
     const imagesToDeleteRaw = parseMaybeJson(req.body.imagesToDelete);
@@ -357,12 +357,12 @@ export const updateProperty = asyncHandler(async (req, res, next) =>
 
     // Remove dropped images from Cloudinary only after the DB update succeeded
     const keptIds = new Set(property.images.map(img => img.publicId));
-    const removedIds = previousImageIds.filter(publicId => publicId && !keptIds.has(publicId));
-    if (removedIds.length > 0)
+    const removed = previousImages.filter(img => img.publicId && !keptIds.has(img.publicId));
+    if (removed.length > 0)
     {
         try
         {
-            await deleteMultipleImages(removedIds);
+            await deleteMediaAssets(removed);
         }
         catch (error)
         {

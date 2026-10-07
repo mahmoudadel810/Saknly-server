@@ -12,7 +12,7 @@ const discardUploadedFiles = (req) =>
     {
         if (file?.public_id)
         {
-            Promise.resolve(cloudinary.uploader.destroy(file.public_id)).catch(() => { });
+            Promise.resolve(cloudinary.uploader.destroy(file.public_id, { resource_type: file.resource_type || 'image' })).catch(() => { });
         }
     });
 };

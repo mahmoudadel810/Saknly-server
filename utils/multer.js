@@ -85,6 +85,7 @@ const createOptimizedStorage = (folder = 'saknly') => {
         cb(null, {
           path: uploadResult.secure_url,
           public_id: uploadResult.public_id,
+          resource_type: uploadResult.resource_type, // 'video' for videos: needed to delete them
           format: uploadResult.format,
           bytes: uploadResult.bytes,
           size: uploadResult.bytes,
@@ -98,7 +99,7 @@ const createOptimizedStorage = (folder = 'saknly') => {
     
     _removeFile: (req, file, cb) => {
       if (file.public_id) {
-        Promise.resolve(cloudinary.uploader.destroy(file.public_id)).catch(() => { });
+        Promise.resolve(cloudinary.uploader.destroy(file.public_id, { resource_type: file.resource_type || 'image' })).catch(() => { });
       }
       cb(null);
     }
@@ -153,7 +154,7 @@ export const cleanupUploads = (req) => {
 
   files.forEach(file => {
     if (file.public_id) {
-      Promise.resolve(cloudinary.uploader.destroy(file.public_id)).catch(() => { });
+      Promise.resolve(cloudinary.uploader.destroy(file.public_id, { resource_type: file.resource_type || 'image' })).catch(() => { });
     }
   });
 };

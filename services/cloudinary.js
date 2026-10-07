@@ -191,7 +191,7 @@ export const deleteMultipleImages = async (
         invalidate: true, // purge CDN cache as part of the delete
         ...options,
         type: 'upload',
-        resource_type: 'image'
+        resource_type: options.resource_type || 'image'
       });
       
       results.push(result);
@@ -202,6 +202,27 @@ export const deleteMultipleImages = async (
     console.error('Batch delete failed:', error);
     throw new Error(`Failed to delete multiple images: ${error.message}`);
   }
+};
+
+// Cloudinary delivery URLs carry the resource type: .../<cloud>/video/upload/... vs .../image/upload/...
+export const resourceTypeOf = (asset) => (/\/video\/upload\//.test(asset?.url || '') ? 'video' : 'image');
+
+/**
+ * Delete stored media ({publicId, url} items, e.g. Property.images) with the right resource_type:
+ * videos uploaded with resource_type 'auto' are not removed by an image delete.
+ * @param {Array<{publicId: string, url?: string}>} assets
+ * @returns {Promise<Array>} Array of deletion results
+ */
+export const deleteMediaAssets = async (assets = []) => {
+  const byType = {};
+  for (const asset of assets) {
+    if (asset?.publicId) (byType[resourceTypeOf(asset)] ??= []).push(asset.publicId);
+  }
+  const results = [];
+  for (const [resource_type, publicIds] of Object.entries(byType)) {
+    results.push(...await deleteMultipleImages(publicIds, { resource_type }));
+  }
+  return results;
 };
 
 /**
