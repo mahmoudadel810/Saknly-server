@@ -239,6 +239,8 @@ export const deletePropertyInquiry = asyncHandler(async (req, res, next) =>
   }
 
   await propertyInquiryModel.findByIdAndDelete(id);
+  // Keep Property.inquiries (and its inquiriesCount virtual) in sync
+  await propertyModel.updateOne({ _id: inquiry.property }, { $pull: { inquiries: inquiry._id } });
 
   res.status(200).json({
     success: true,

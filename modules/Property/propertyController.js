@@ -7,6 +7,8 @@ import ApiFeatures from '../../utils/apiFeatures.js';
 import sendEmail from '../../services/sendEmail.js';
 import userModel from '../../Model/UserModel.js';
 import Agency from '../../Model/AgencyModel.js';
+import Comment from '../../Model/CommentModel.js';
+import PropertyInquiry from '../../Model/PropertyInquiryModel.js';
 import logger from '../../utils/logger.js';
 
 // Translation function for status values
@@ -88,7 +90,8 @@ const parseMaybeJson = (value) =>
     try { return JSON.parse(value); } catch { return value; }
 };
 
-// Remove every reference to a property (agency list, wishlists) and its Cloudinary images.
+// Remove every reference to a property (agency list, wishlists), the comments and inquiries
+// that belong to it, and its Cloudinary images. Used by owner delete and admin deny.
 // Best effort: failures are logged, never thrown.
 const cleanupPropertyReferences = async (property) =>
 {
@@ -96,6 +99,8 @@ const cleanupPropertyReferences = async (property) =>
     const results = await Promise.allSettled([
         Agency.updateMany({ properties: id }, { $pull: { properties: id } }),
         userModel.updateMany({ 'wishlist.property': id }, { $pull: { wishlist: { property: id } } }),
+        Comment.deleteMany({ property: id }),
+        PropertyInquiry.deleteMany({ property: id }),
         (async () =>
         {
             const ids = (property.images || []).map(img => img.publicId).filter(Boolean);
