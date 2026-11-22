@@ -101,6 +101,13 @@ const cleanupPropertyReferences = async (property) =>
         .forEach(r => logger.warn(`Property ${id} cleanup step failed: ${r.reason?.message || r.reason}`));
 };
 
+// Approve/deny found no listing waiting for review: 409 when it exists (another admin already
+// reviewed it), 404 when it is gone
+const notPendingError = async (id) =>
+    (await propertyModel.exists({ _id: id }))
+        ? new AppError('Property was already reviewed', 409)
+        : new AppError('Property not found', 404);
+
 const paginationMeta = (query, totalDocs) =>
 {
     const currentPage = ApiFeatures.getPage(query);
@@ -458,17 +465,25 @@ export const approveProperty = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
     const { status, isActive, isApproved } = req.body;
 
-    const property = await propertyModel.findById(id).populate('owner', 'email userName');
-    if (!property) return next(new AppError('Property not found', 404));
-
     const allowedStatuses = ['available', 'rented', 'sold', 'pending', 'inactive'];
-    property.status = allowedStatuses.includes(status) ? status : 'available';
-    property.isActive = typeof isActive === 'boolean' ? isActive : true;
-    property.isApproved = typeof isApproved === 'boolean' ? isApproved : true;
-    property.approvedBy = req.user._id;
-    property.approvedAt = new Date();
-    property.rejectionReason = undefined;
-    await property.save();
+
+    // One atomic update on a listing still waiting for review: when two admins approve at once,
+    // or a listing is approved twice, only the first succeeds and only one email goes out
+    const property = await propertyModel.findOneAndUpdate(
+        { _id: id, isApproved: { $ne: true } },
+        {
+            $set: {
+                status: allowedStatuses.includes(status) ? status : 'available',
+                isActive: typeof isActive === 'boolean' ? isActive : true,
+                isApproved: typeof isApproved === 'boolean' ? isApproved : true,
+                approvedBy: req.user._id,
+                approvedAt: new Date(),
+            },
+            $unset: { rejectionReason: 1 },
+        },
+        { new: true, runValidators: true }
+    );
+    if (!property) return next(await notPendingError(id));
 
     // Notify the owner (best effort; no email when the listing has no contact email)
     await dispatchEmail('property.approved', {
@@ -490,10 +505,15 @@ export const denyProperty = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
     const reason = typeof req.query.reason === 'string' ? req.query.reason.slice(0, 500) : ''; // reason comes from the query string
     
-    const property = await propertyModel.findById(id).populate('owner', 'email userName');
-    if (!property) return next(new AppError('Property not found', 404));
-    
-    // Email the owner before deleting (best effort); the event carries everything the email needs
+    // Atomic delete of a listing still waiting for review: of two admins denying at once only one
+    // gets the document, and an already-approved listing is left alone (admins delete those instead)
+    const property = await propertyModel.findOneAndDelete({ _id: id, isApproved: { $ne: true } });
+    if (!property) return next(await notPendingError(id));
+
+    // Every reference to it (agency, wishlists, comments, inquiries, images)
+    await cleanupPropertyReferences(property);
+
+    // Emailed only after the delete succeeded (best effort); the event carries everything the email needs
     await dispatchEmail('property.denied', {
         propertyId: String(property._id),
         title: property.title,
@@ -501,11 +521,7 @@ export const denyProperty = asyncHandler(async (req, res, next) => {
         contactEmail: property.contactInfo?.email,
         reason,
     });
-    
-    // Delete the property and every reference to it (agency, wishlists, images)
-    await propertyModel.deleteOne({ _id: property._id });
-    await cleanupPropertyReferences(property);
-    
+
     res.status(200).json({
         success: true,
         message: 'Property denied and deleted successfully',

@@ -5,14 +5,15 @@ import Property from '../Model/PropertyModel.js';
 import Comment from '../Model/CommentModel.js';
 import PropertyInquiry from '../Model/PropertyInquiryModel.js';
 import { getApp, API } from './helpers/app.js';
-import { makeUser, makeAdmin, makeProperty, tokenFor, auth } from './helpers/factories.js';
+import { makeUser, makeAdmin, makeProperty, makePendingProperty, tokenFor, auth } from './helpers/factories.js';
 
-// A listing with one comment and one inquiry on it, plus an unrelated listing with its own
-const seed = async () =>
+// A listing with one comment and one inquiry on it, plus an unrelated listing with its own.
+// Deny only applies to a listing waiting for review, so its test seeds a pending target.
+const seed = async ({ pendingTarget = false } = {}) =>
 {
     const owner = await makeUser();
     const commenter = await makeUser();
-    const target = await makeProperty(owner);
+    const target = pendingTarget ? await makePendingProperty(owner) : await makeProperty(owner);
     const unrelated = await makeProperty(owner);
     for (const p of [target, unrelated])
     {
@@ -46,7 +47,7 @@ describe('property delete cascade (M8)', () =>
     {
         const app = await getApp();
         const admin = await makeAdmin();
-        const { target, unrelated } = await seed();
+        const { target, unrelated } = await seed({ pendingTarget: true });
         const res = await request(app).delete(`${API}/properties/${target._id}/deny?reason=${encodeURIComponent('<b>blurry</b> photos')}`)
             .set(auth(tokenFor(admin)));
         expect(res.status).toBe(200);
