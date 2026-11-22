@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import logger from '../../utils/logger.js';
+import { recordAuditEvent } from '../audit.js';
 import { isQueueEnabled, getPublishChannel } from './connection.js';
 import { EXCHANGES } from './topology.js';
 
@@ -18,7 +19,8 @@ const withTimeout = (promise, ms) =>
 // Resolves true once the broker confirmed the message, false when the queue is off or publishing failed.
 // Never throws: on false the caller does the work inline.
 // Awaiting the confirm matters on Vercel: a frozen function would drop an unconfirmed publish.
-export const publish = async (exchange, routingKey, data) =>
+// A caller that needs the id (to dedupe its own fallback against the worker) passes messageId.
+export const publish = async (exchange, routingKey, data, { messageId = randomUUID(), occurredAt = new Date().toISOString() } = {}) =>
 {
     if (!isQueueEnabled()) return false;
 
@@ -31,13 +33,13 @@ export const publish = async (exchange, routingKey, data) =>
         {
             const channel = await getPublishChannel();
             if (abandoned) throw new Error('connected after the publish timeout, not sent');
-            const body = Buffer.from(JSON.stringify({ type: routingKey, data, occurredAt: new Date().toISOString() }));
+            const body = Buffer.from(JSON.stringify({ type: routingKey, data, occurredAt }));
             await new Promise((resolve, reject) =>
             {
                 channel.publish(exchange, routingKey, body, {
                     persistent: true,
                     contentType: 'application/json',
-                    messageId: randomUUID(),
+                    messageId,
                     type: routingKey,
                     timestamp: Math.floor(Date.now() / 1000),
                     headers: { 'x-attempt': 1 },
@@ -51,10 +53,17 @@ export const publish = async (exchange, routingKey, data) =>
     {
         abandoned = true;
         logger.warn(`Queue publish of ${routingKey} failed, falling back to inline: ${error.message}`);
+        // The audit consumer will not see this event, so record it here. Same messageId: if the broker
+        // did store the message (late confirm), the consumer's upsert finds this row and adds nothing.
+        if (exchange === EXCHANGES.events)
+        {
+            await recordAuditEvent({ messageId, type: routingKey, occurredAt, data })
+                .catch((auditError) => logger.error(`Audit fallback for ${routingKey} failed: ${auditError.message}`));
+        }
         return false;
     }
 };
 
-export const publishEvent = (routingKey, data) => publish(EXCHANGES.events, routingKey, data);
+export const publishEvent = (routingKey, data, options) => publish(EXCHANGES.events, routingKey, data, options);
 
-export const publishMediaJob = (routingKey, data) => publish(EXCHANGES.media, routingKey, data);
+export const publishMediaJob = (routingKey, data, options) => publish(EXCHANGES.media, routingKey, data, options);
