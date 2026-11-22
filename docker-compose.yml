@@ -31,10 +31,9 @@ services:
       timeout: 10s
       retries: 20
 
+  # no host port: 27017 is often taken by a local MongoDB; the containers reach it as mongo:27017
   mongo:
     image: mongo:8
-    ports:
-      - "27017:27017"
     volumes:
       - mongo-data:/data/db
 
