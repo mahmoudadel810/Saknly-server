@@ -18,19 +18,41 @@ export const dispatchEmail = async (type, data) =>
     const email = buildEmail(type, data);
     if (!email) return false;
 
+    let sendAttempted = false;
+    const send = () =>
+    {
+        sendAttempted = true;
+        return sendEmail(email);
+    };
+
     try
     {
-        if (!isQueueEnabled()) return await sendEmail(email);
+        if (!isQueueEnabled()) return await send();
 
         // A failed publish may still have reached the broker (its confirm came too late), and then the
         // worker sends this email too. Both claim the same messageId, so only the first one sends it.
-        const { ran, result } = await runOnce(messageId, QUEUES.email.name, () => sendEmail(email));
+        const { ran, result } = await runOnce(messageId, QUEUES.email.name, send);
         return ran ? result : true;
     }
     catch (error)
     {
         // The worker holds the claim and is sending it right now
         if (error instanceof MessageInProgressError) return true;
+        // The claim itself failed (database), not the send: the dedupe must not cost the email
+        if (!sendAttempted) return sendPlain(email);
+        logger.error(`Email to recipient failed (${email.subject}): ${error.message}`);
+        return false;
+    }
+};
+
+const sendPlain = async (email) =>
+{
+    try
+    {
+        return await sendEmail(email);
+    }
+    catch (error)
+    {
         logger.error(`Email to recipient failed (${email.subject}): ${error.message}`);
         return false;
     }

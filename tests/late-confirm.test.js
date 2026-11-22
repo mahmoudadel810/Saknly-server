@@ -45,6 +45,17 @@ describe('a late publish confirm sends the email once', () =>
         expect(sendEmail).toHaveBeenCalledTimes(1);
     });
 
+    it('a claim that cannot be written does not cost the email', async () =>
+    {
+        process.env.RABBITMQ_URL = 'amqp://broker.test';
+        publishEvent.mockResolvedValueOnce(false);
+        const spy = vi.spyOn(ProcessedMessage, 'create').mockRejectedValueOnce(new Error('mongo unavailable'));
+
+        await expect(dispatchEmail('property.approved', data)).resolves.toBe(true);
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+    });
+
     it('queue off: plain inline send, no claim written (behaviour unchanged)', async () =>
     {
         publishEvent.mockResolvedValueOnce(false);
