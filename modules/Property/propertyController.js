@@ -2,7 +2,7 @@
 
 import propertyModel from '../../Model/PropertyModel.js';
 import { AppError, asyncHandler } from '../../middelWares/errorMiddleware.js';
-import { deleteMediaAssets } from '../../services/cloudinary.js';
+import { removeMedia } from '../../services/mediaCleanup.js';
 import ApiFeatures from '../../utils/apiFeatures.js';
 import { dispatchEmail } from '../../services/notify.js';
 import userModel from '../../Model/UserModel.js';
@@ -93,11 +93,7 @@ const cleanupPropertyReferences = async (property) =>
         userModel.updateMany({ 'wishlist.property': id }, { $pull: { wishlist: { property: id } } }),
         Comment.deleteMany({ property: id }),
         PropertyInquiry.deleteMany({ property: id }),
-        (async () =>
-        {
-            const media = (property.images || []).filter(img => img.publicId);
-            if (media.length > 0) await deleteMediaAssets(media);
-        })(),
+        removeMedia(property.images || [], `property ${id} removed`),
     ]);
     results
         .filter(r => r.status === 'rejected')
@@ -354,7 +350,7 @@ export const updateProperty = asyncHandler(async (req, res, next) =>
     {
         try
         {
-            await deleteMediaAssets(removed);
+            await removeMedia(removed, `property ${property._id} images replaced`);
         }
         catch (error)
         {
