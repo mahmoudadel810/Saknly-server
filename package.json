@@ -23,6 +23,7 @@
   "license": "MIT",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "amqplib": "^0.10.9",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^1.41.3",
     "compression": "^1.8.0",
