@@ -23,7 +23,9 @@ const sendToQueueConfirmed = (channel, queue, content, options) =>
 export const handleMessage = async (channel, queue, msg, handler) =>
 {
     const attempt = Number(msg.properties.headers?.['x-attempt']) || 1;
-    const context = { messageId: msg.properties.messageId, routingKey: msg.fields.routingKey, attempt, queue };
+    // A retried message comes back through the default exchange with the queue name as routing key,
+    // so the event type is read from the message's own type property
+    const context = { messageId: msg.properties.messageId, type: msg.properties.type || msg.fields.routingKey, attempt, queue };
 
     let payload;
     try
@@ -59,7 +61,7 @@ export const handleMessage = async (channel, queue, msg, handler) =>
                     },
                 });
                 channel.ack(msg);
-                logger.warn(`[${queue}] ${context.routingKey} attempt ${attempt} failed (${error.message}), retry in ${delays[attempt - 1]}ms`);
+                logger.warn(`[${queue}] ${context.type} attempt ${attempt} failed (${error.message}), retry in ${delays[attempt - 1]}ms`);
                 return 'retried';
             }
             catch (retryError)
@@ -72,7 +74,7 @@ export const handleMessage = async (channel, queue, msg, handler) =>
         }
 
         channel.nack(msg, false, false);
-        logger.error(`[${queue}] ${context.routingKey} ${context.messageId} failed after ${attempt} attempt(s), sent to DLQ: ${error.message}`);
+        logger.error(`[${queue}] ${context.type} ${context.messageId} failed after ${attempt} attempt(s), sent to DLQ: ${error.message}`);
         return 'dead-lettered';
     }
 };
