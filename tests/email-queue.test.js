@@ -47,7 +47,7 @@ describe('email dispatch from the API', () =>
         expect(publishEvent).toHaveBeenCalledWith('user.registered', expect.objectContaining({
             email: 'queued@example.test',
             confirmationLink: expect.stringContaining('/confirm-email/'),
-        }));
+        }), expect.objectContaining({ messageId: expect.any(String) }));
     });
 
     it('falls back to inline sending when the broker is unreachable', async () =>

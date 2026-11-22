@@ -41,22 +41,17 @@ const claim = async (messageId, queue) =>
     throw new MessageInProgressError(messageId);
 };
 
-// Wraps a consumer handler so each messageId is handled once per queue.
-// A failed attempt releases its claim, so the retry can run.
-export const once = (handler) => async (payload, context) =>
+// Runs fn at most once per (messageId, queue): resolves { ran: true, result }, or { ran: false } when the
+// message was already handled. Throws MessageInProgressError while another holder's claim is fresh.
+// A failed run releases its claim, so a retry can run.
+export const runOnce = async (messageId, queue, fn) =>
 {
-    const { messageId, queue } = context;
-    if (!messageId) return handler(payload, context);
+    if (!(await claim(messageId, queue))) return { ran: false };
 
-    if (!(await claim(messageId, queue)))
-    {
-        logger.info(`[${queue}] ${messageId} already processed, skipping duplicate`);
-        return;
-    }
-
+    let result;
     try
     {
-        await handler(payload, context);
+        result = await fn();
     }
     catch (error)
     {
@@ -65,4 +60,15 @@ export const once = (handler) => async (payload, context) =>
     }
 
     await ProcessedMessage.updateOne({ messageId, queue }, { $set: { status: 'done', processedAt: new Date() } });
+    return { ran: true, result };
+};
+
+// Wraps a consumer handler so each messageId is handled once per queue.
+export const once = (handler) => async (payload, context) =>
+{
+    const { messageId, queue } = context;
+    if (!messageId) return handler(payload, context);
+
+    const { ran } = await runOnce(messageId, queue, () => handler(payload, context));
+    if (!ran) logger.info(`[${queue}] ${messageId} already processed, skipping duplicate`);
 };
