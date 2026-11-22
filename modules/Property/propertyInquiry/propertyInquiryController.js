@@ -7,8 +7,7 @@ import
   applyPagination,
   createPaginatedResponse,
 } from "../../../utils/pagination.js";
-import sendEmail from "../../../services/sendEmail.js";
-import { inquiryReceivedEmail } from "../../../services/emailTemplates/inquiryEmails.js";
+import { dispatchEmail } from "../../../services/notify.js";
 import logger from "../../../utils/logger.js";
 
 const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -49,19 +48,22 @@ export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
     { path: "agent", select: "userName" },
   ]);
 
-  // Notify property agent/owner about the inquiry
+  // Notify property agent/owner about the inquiry (best effort)
   if (inquiry.agent)
-  {  
+  {
     try
     {
-      const agent = await userModel.findById(inquiry.agent);
-      if (agent && agent.email)
-      {
-        await sendEmail({
-          to: agent.email,
-          ...inquiryReceivedEmail({ propertyTitle: inquiry.property?.title, name, email, phone, message })
-        });
-      }
+      const agent = await userModel.findById(inquiry.agent).select('email');
+      await dispatchEmail('inquiry.created', {
+        inquiryId: String(inquiry._id),
+        propertyId: String(propertyId),
+        propertyTitle: inquiry.property?.title,
+        agentEmail: agent?.email,
+        name,
+        email,
+        phone,
+        message,
+      });
     } catch (error)
     {
       logger.warn(`Inquiry notification email failed: ${error.message}`);

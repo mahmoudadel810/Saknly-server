@@ -10,6 +10,8 @@ x-app-env: &app-env
   DB_NAME: saknly
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
   CLIENT_URL: ${CLIENT_URL:-http://localhost:3000}
+  JWT_SECRET: ${JWT_SECRET:-local-compose-only-secret}
+  BEARER_KEY: ${BEARER_KEY:-Saknly__}
   EMAIL_SERVICE: ""
   EMAIL_SMTP_HOST: mailpit
   EMAIL_SMTP_PORT: "1025"

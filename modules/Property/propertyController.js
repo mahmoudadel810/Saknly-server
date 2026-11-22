@@ -4,8 +4,7 @@ import propertyModel from '../../Model/PropertyModel.js';
 import { AppError, asyncHandler } from '../../middelWares/errorMiddleware.js';
 import { deleteMediaAssets } from '../../services/cloudinary.js';
 import ApiFeatures from '../../utils/apiFeatures.js';
-import sendEmail from '../../services/sendEmail.js';
-import { propertyApprovedEmail, propertyDeniedEmail } from '../../services/emailTemplates/propertyEmails.js';
+import { dispatchEmail } from '../../services/notify.js';
 import userModel from '../../Model/UserModel.js';
 import Agency from '../../Model/AgencyModel.js';
 import Comment from '../../Model/CommentModel.js';
@@ -467,17 +466,13 @@ export const approveProperty = asyncHandler(async (req, res, next) => {
     property.rejectionReason = undefined;
     await property.save();
 
-    // Notify the owner (best effort)
-    if (property.contactInfo && property.contactInfo.email) {
-        try {
-            await sendEmail({
-                to: property.contactInfo.email,
-                ...propertyApprovedEmail({ name: property.contactInfo.name, title: property.title })
-            });
-        } catch (error) {
-            logger.warn(`Approval email for property ${property._id} failed: ${error.message}`);
-        }
-    }
+    // Notify the owner (best effort; no email when the listing has no contact email)
+    await dispatchEmail('property.approved', {
+        propertyId: String(property._id),
+        title: property.title,
+        ownerName: property.contactInfo?.name,
+        contactEmail: property.contactInfo?.email,
+    });
 
     res.status(200).json({
         success: true,
@@ -494,17 +489,14 @@ export const denyProperty = asyncHandler(async (req, res, next) => {
     const property = await propertyModel.findById(id).populate('owner', 'email userName');
     if (!property) return next(new AppError('Property not found', 404));
     
-    // Send email to owner before deleting (best effort)
-    if (property.contactInfo && property.contactInfo.email) {
-        try {
-            await sendEmail({
-                to: property.contactInfo.email,
-                ...propertyDeniedEmail({ name: property.contactInfo.name, title: property.title, reason })
-            });
-        } catch (error) {
-            logger.warn(`Rejection email for property ${property._id} failed: ${error.message}`);
-        }
-    }
+    // Email the owner before deleting (best effort); the event carries everything the email needs
+    await dispatchEmail('property.denied', {
+        propertyId: String(property._id),
+        title: property.title,
+        ownerName: property.contactInfo?.name,
+        contactEmail: property.contactInfo?.email,
+        reason,
+    });
     
     // Delete the property and every reference to it (agency, wishlists, images)
     await propertyModel.deleteOne({ _id: property._id });
