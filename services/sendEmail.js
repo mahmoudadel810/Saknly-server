@@ -1,5 +1,13 @@
 import nodemailer from "nodemailer";
 
+// A hung SMTP send gives up well before the queue's 2-minute stale-claim window (nodemailer's own
+// socket timeout is 10 minutes); otherwise another worker could take the claim over and send it again
+export const SMTP_TIMEOUTS = Object.freeze({
+    connectionTimeout: 20_000,
+    greetingTimeout: 20_000,
+    socketTimeout: 60_000,
+});
+
 // EMAIL_SERVICE (e.g. "gmail") as before; EMAIL_SMTP_HOST (+ EMAIL_SMTP_PORT) only when no service is set
 const createTransporter = () =>
 {
@@ -16,12 +24,14 @@ const createTransporter = () =>
             port,
             secure: port === 465,
             auth,
+            ...SMTP_TIMEOUTS,
         });
     }
 
     return nodemailer.createTransport({
         service: process.env.EMAIL_SERVICE,
         auth,
+        ...SMTP_TIMEOUTS,
     });
 };
 
