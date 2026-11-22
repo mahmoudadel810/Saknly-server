@@ -1,15 +1,15 @@
 import Agency from '../../Model/AgencyModel.js';
 import { asyncHandler, AppError } from '../../middelWares/errorMiddleware.js';
-import { deleteMultipleImages } from '../../services/cloudinary.js';
+import { removeMedia } from '../../services/mediaCleanup.js';
 import Property from '../../Model/PropertyModel.js';
 import logger from '../../utils/logger.js';
 
 const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Best effort: a Cloudinary failure must not fail the request
+// Best effort: a Cloudinary failure must not fail the request. Logos are images, so no url is needed.
 const safeDeleteImages = async (publicIds) => {
   try {
-    if (publicIds.length > 0) await deleteMultipleImages(publicIds);
+    await removeMedia(publicIds.map(publicId => ({ publicId })), 'agency logo');
   } catch (error) {
     logger.warn(`Failed to delete agency logo: ${error.message}`);
   }
