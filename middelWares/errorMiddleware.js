@@ -65,6 +65,13 @@ export const errorHandler = (err, req, res, next) =>
         statusCode = 400;
     }
 
+    // Mongoose optimistic concurrency: another request changed the document (e.g. its images) first
+    if (err.name === 'VersionError')
+    {
+        message = 'This was changed by another request. Reload it and try again';
+        statusCode = 409;
+    }
+
     // Mongoose validation error
     if (err.name === 'ValidationError')
     {

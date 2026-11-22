@@ -7,6 +7,8 @@ const processedMessageSchema = new mongoose.Schema({
     queue: { type: String, required: true },
     status: { type: String, enum: ['processing', 'done'], default: 'processing' },
     claimedAt: { type: Date, default: Date.now },
+    // Identifies the current holder, so a run can only release its own claim (not one taken over from it)
+    claimToken: { type: String },
     // TTL index: records go after 7 days, long past any redelivery
     processedAt: { type: Date, default: Date.now, expires: 60 * 60 * 24 * 7 },
 });
