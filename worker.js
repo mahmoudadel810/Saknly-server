@@ -2,6 +2,7 @@ import './utils/loadEnv.js'; // must stay the first import: loads env before oth
 import os from 'node:os';
 import mongoose from 'mongoose';
 import connectDB from './DB/connection.js';
+import ProcessedMessage from './Model/ProcessedMessageModel.js';
 import logger from './utils/logger.js';
 import { isQueueEnabled, getConnection, closeQueueConnection } from './services/queue/connection.js';
 import { consume } from './services/queue/consumer.js';
@@ -33,6 +34,8 @@ const start = async () =>
     }
 
     await connectDB();
+    // The duplicate guard relies on the unique index: build it before the first message
+    await ProcessedMessage.init();
     const connection = await getConnection();
 
     // A dropped broker connection kills the consumers; exit and let the process manager restart us
