@@ -1,0 +1,40 @@
+# Render Blueprint for the queue worker. The API stays on Vercel.
+# Render asks for every sync: false value once, when the Blueprint is created.
+services:
+  - type: worker
+    name: saknly-worker
+    runtime: docker
+    plan: starter # background workers have no free instance type
+    region: virginia # next to Vercel's default function region (iad1)
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: node worker.js # the image's CMD starts the API
+    autoDeployTrigger: commit
+    envVars:
+      - key: RABBITMQ_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: CLIENT_URL # used in email links
+        sync: false
+      - key: EMAIL_SERVICE
+        sync: false
+      - key: EMAIL_SMTP_HOST
+        sync: false
+      - key: EMAIL_SMTP_PORT
+        sync: false
+      - key: EMAIL_SMTP_USER
+        sync: false
+      - key: EMAIL_SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

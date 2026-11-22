@@ -22,11 +22,15 @@ export const publish = async (exchange, routingKey, data) =>
 {
     if (!isQueueEnabled()) return false;
 
+    // Set on timeout. A slow connect (cold start, remote broker) must not publish late,
+    // since the caller has already done the work inline by then.
+    let abandoned = false;
     try
     {
         const confirmed = (async () =>
         {
             const channel = await getPublishChannel();
+            if (abandoned) throw new Error('connected after the publish timeout, not sent');
             const body = Buffer.from(JSON.stringify({ type: routingKey, data, occurredAt: new Date().toISOString() }));
             await new Promise((resolve, reject) =>
             {
@@ -45,6 +49,7 @@ export const publish = async (exchange, routingKey, data) =>
     }
     catch (error)
     {
+        abandoned = true;
         logger.warn(`Queue publish of ${routingKey} failed, falling back to inline: ${error.message}`);
         return false;
     }
