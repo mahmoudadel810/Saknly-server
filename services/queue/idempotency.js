@@ -4,14 +4,15 @@ import logger from '../../utils/logger.js';
 // A claim older than this belongs to a worker that died mid-message and may be taken over
 const STALE_CLAIM_MS = 2 * 60 * 1000;
 
-// Thrown while another consumer holds a fresh claim: the message goes to a retry queue,
-// and by the next attempt the claim is either done (skipped) or stale (taken over)
+// Thrown while another consumer holds a fresh claim: the message waits in a retry queue without
+// using up an attempt, until the claim is done (skipped) or stale (taken over after a worker crash)
 export class MessageInProgressError extends Error
 {
     constructor(messageId)
     {
         super(`message ${messageId} is being handled by another consumer`);
         this.name = 'MessageInProgressError';
+        this.countsAsAttempt = false;
     }
 }
 

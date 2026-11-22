@@ -48,20 +48,23 @@ export const handleMessage = async (channel, queue, msg, handler) =>
     catch (error)
     {
         const delays = retryDelays();
-        if (!(error instanceof PermanentJobError) && attempt <= delays.length)
+        // countsAsAttempt === false: waiting on something else (another worker's claim), not a failure
+        const counts = error.countsAsAttempt !== false;
+        if (!(error instanceof PermanentJobError) && (!counts || attempt <= delays.length))
         {
+            const level = Math.min(attempt, delays.length);
             try
             {
-                await sendToQueueConfirmed(channel, retryQueueName(queue, attempt), msg.content, {
+                await sendToQueueConfirmed(channel, retryQueueName(queue, level), msg.content, {
                     ...msg.properties,
                     headers: {
                         ...msg.properties.headers,
-                        'x-attempt': attempt + 1,
+                        'x-attempt': counts ? attempt + 1 : attempt,
                         'x-last-error': String(error.message).slice(0, 200),
                     },
                 });
                 channel.ack(msg);
-                logger.warn(`[${queue}] ${context.type} attempt ${attempt} failed (${error.message}), retry in ${delays[attempt - 1]}ms`);
+                logger.warn(`[${queue}] ${context.type} attempt ${attempt} failed (${error.message}), retry in ${delays[level - 1]}ms`);
                 return 'retried';
             }
             catch (retryError)
