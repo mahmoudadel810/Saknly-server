@@ -24,7 +24,7 @@ The REST API behind [Saknly](https://saknly-ruddy.vercel.app), an Arabic-first p
 
 ## Tech stack
 
-Node.js 22 · Express 5 · MongoDB with Mongoose 8 · JWT · Joi · Multer, sharp and Cloudinary · Nodemailer · Google OAuth (Passport) · Google Gemini · Vitest, Supertest and mongodb-memory-server.
+Node.js 22 · Express 5 · MongoDB with Mongoose 8 · RabbitMQ (amqplib) · JWT · Joi · Multer, sharp and Cloudinary · Nodemailer · Google OAuth (Passport) · Google Gemini · Docker Compose · Vitest, Supertest and mongodb-memory-server.
 
 ## API overview
 
@@ -68,6 +68,8 @@ npm run dev               # http://localhost:5000
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CALLBACK_URL` | for Google sign-in | Google OAuth |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | for the chatbot | Gemini (model defaults to `gemini-2.5-flash`) |
 | `SEED_ADMIN_PASSWORD`, `SEED_DEMO_PASSWORD` | | Passwords for the seed script; it generates random ones if they are not set |
+| `RABBITMQ_URL` | for the queue | RabbitMQ connection. Without it, emails and Cloudinary deletes run inline as before |
+| `QUEUE_PUBLISH_TIMEOUT_MS`, `QUEUE_RETRY_DELAYS_MS` | | Publish confirm timeout (default 3000) and retry delays (default `10000,30000,60000`) |
 
 Features whose variables are missing switch off cleanly; for example, Google sign-in routes are disabled without its keys.
 
@@ -80,7 +82,80 @@ Features whose variables are missing switch off cleanly; for example, Google sig
 | `npm test` | Run the test suite (Vitest, in-memory MongoDB, no external services) |
 | `npm run test:smoke` | Quick smoke checks that need no database |
 | `npm run seed -- --reset` | Replace the data with demo content |
+| `npm run worker` | Start the queue worker (needs `RABBITMQ_URL`) |
+| `node scripts/queue-smoke.js` | End-to-end queue check against the compose stack |
+
+## Message queue (RabbitMQ)
+
+Slow side effects — notification emails and Cloudinary deletes — leave the request: the API publishes an event and a separate **worker** process does the work. The queue is optional: with `RABBITMQ_URL` unset, or when a publish fails, the API does the work inline exactly as before.
+
+**Producers (API)** and **consumers (worker)**
+
+| Event | Published by | Consumed by |
+|---|---|---|
+| `user.registered`, `user.confirmation_resent` | register, resend confirmation | email, audit |
+| `user.password_changed` | reset password | email, audit |
+| `property.approved`, `property.denied` | admin approve / deny | email, audit |
+| `property.deleted` | owner or admin delete | audit |
+| `inquiry.created` | new inquiry | email, audit |
+| `media.delete` | property delete/deny/update, agency logo change | media cleanup |
+
+Forgot-password emails stay synchronous: the reset code is removed if the email can't be delivered, so the request needs the result. The chatbot stays synchronous too.
+
+**Exchanges and queues**
+
+| Exchange | Type | Queues (binding) |
+|---|---|---|
+| `saknly.events` | topic | `email.notifications` (`user.*`, `property.approved`, `property.denied`, `inquiry.created`) · `audit.log` (`#`) |
+| `saknly.media` | direct | `media.cleanup` (`media.delete`) |
+| `saknly.dlx` | direct | `<queue>.dlq`, one per work queue |
+
+- **Topic** routes each event by pattern. `audit.log` bound to `#` receives every event, which covers broadcasting. A separate **fanout** exchange would only pay off once several services need every event and don't care about routing keys.
+- **Direct** routes media jobs to the one queue that handles them.
+
+**Message flow** (an admin approves a listing):
+
+```
+PUT /properties/:id/approve
+  → propertyController saves the listing, calls dispatchEmail('property.approved', {...})
+  → publisher: confirm channel, persistent message, messageId, x-attempt=1; waits for the broker confirm
+  → saknly.events (topic) ──property.approved──┬→ email.notifications
+                                               └→ audit.log
+  → API responds 200 (the email is not awaited)
+worker (prefetch 10, manual ack)
+  → email.notifications: claim messageId → render template → sendEmail → ack
+       on error: → email.notifications.retry.N (TTL 10s / 30s / 60s) → back to email.notifications
+       after the 4th failed attempt: nack → saknly.dlx → email.notifications.dlq
+  → audit.log: upsert AuditLog by messageId (ids only, no emails or links) → ack
+```
+
+**Reliability**
+- Exchanges and queues are durable, and messages are persistent.
+- The API awaits the publisher confirm before responding, because a frozen serverless function would drop an unconfirmed publish.
+- Consumers ack manually, and only after the work succeeded.
+- A failed message waits in a per-delay retry queue, which avoids head-of-line blocking from per-message TTLs. After 3 retries it goes to the DLQ. Errors that can't be fixed by retrying (bad payload, rejected recipient) go straight to the DLQ.
+- Delivery is at-least-once, so the email consumer claims each `messageId` in MongoDB (`ProcessedMessage`, 7-day TTL) and never sends twice. The audit consumer upserts by `messageId`.
+- On SIGTERM the worker stops taking messages, finishes the in-flight ones, then exits. Anything unacked is redelivered.
+
+**Scaling (competing consumers):** run more worker replicas on the same queues. `prefetch` caps the unacked messages per replica (email 10, media 5, audit 20), so a burst of Cloudinary deletes spreads across replicas instead of piling onto one. Locally:
+
+```bash
+docker compose up -d --build              # RabbitMQ, MongoDB, Mailpit, API and one worker
+docker compose up -d --scale worker=3     # three competing workers
+```
+
+- RabbitMQ UI: http://localhost:15672 (`guest`/`guest`).
+- Mailpit catches every email at http://localhost:8025, so nothing is really sent.
+- `docker compose stop mailpit` makes SMTP fail, which lets you watch the retries and the DLQ.
+
+**Image processing** still runs in the upload request, because sharp and Cloudinary sit inside the multer storage engine and a worker can't read a serverless request's file. Queueing it would mean uploading the original first, then letting a worker re-encode it and swap the URL on the listing.
 
 ## Deployment
 
 Deployed on Vercel as a serverless function: `index.js` exports the Express app and only listens when it runs outside Vercel. Pushing to `main` deploys. Set the environment variables above in the Vercel project, and allow Vercel's IPs (or `0.0.0.0/0`) in your MongoDB Atlas network access list.
+
+Vercel can't run a long-lived consumer. To switch the queue on in production:
+1. Create a RabbitMQ broker (for example, a CloudAMQP free plan) and set `RABBITMQ_URL` on Vercel.
+2. Run the worker from this repo's `Dockerfile` with `node worker.js` on a host that keeps processes running (Render background worker, Railway, Fly.io). Give it the same database, email and Cloudinary variables as the API.
+
+Until both are in place, production keeps sending emails inline.
