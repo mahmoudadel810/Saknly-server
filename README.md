@@ -138,7 +138,7 @@ worker (prefetch 10, manual ack)
 - A worker that crashes mid-message leaves its claim behind. The redelivered copy takes over once the claim is 2 minutes old and sends the email then.
 - The audit consumer upserts by `messageId`.
 - On SIGTERM the worker stops taking messages, finishes the in-flight ones, then exits. Anything unacked is redelivered.
-- Known edge: if the broker stores a message but its confirm arrives after `QUEUE_PUBLISH_TIMEOUT_MS`, the API also sends that email inline, so it goes out twice.
+- Known edge: if the broker stores a message but its confirm arrives after `QUEUE_PUBLISH_TIMEOUT_MS`, the API also sends that email inline, so it goes out twice. A connection that is still opening at the timeout publishes nothing, so a slow cold start cannot cause this.
 - Nothing replays the DLQ automatically. Inspect it in the RabbitMQ UI and move messages back by hand (or with the shovel plugin).
 
 **Scaling (competing consumers):** run more worker replicas on the same queues. `prefetch` caps the unacked messages per replica (email 10, media 5, audit 20), so a burst of Cloudinary deletes spreads across replicas instead of piling onto one. Locally:
@@ -158,8 +158,11 @@ docker compose up -d --scale worker=3     # three competing workers
 
 Deployed on Vercel as a serverless function: `index.js` exports the Express app and only listens when it runs outside Vercel. Pushing to `main` deploys. Set the environment variables above in the Vercel project, and allow Vercel's IPs (or `0.0.0.0/0`) in your MongoDB Atlas network access list.
 
-Vercel can't run a long-lived consumer. To switch the queue on in production:
-1. Create a RabbitMQ broker (for example, a CloudAMQP free plan) and set `RABBITMQ_URL` on Vercel.
-2. Run the worker from this repo's `Dockerfile` with `node worker.js` on a host that keeps processes running (Render background worker, Railway, Fly.io). Give it the same database, email and Cloudinary variables as the API.
+Vercel can't run a long-lived consumer, so the worker runs on Render (`render.yaml`). Switch the queue on in this order:
+1. **Broker:** create a CloudAMQP instance (the free Little Lemur plan: 20 connections, 1M messages a month) in AWS `us-east-1`, near Vercel's `iad1`. Copy its AMQPS URL.
+2. **Worker:** in Render, choose New → Blueprint and pick this repo. Render reads `render.yaml` and asks for each value: `RABBITMQ_URL` from step 1, and the rest copied from the Vercel project. Background workers have no free instance (Starter plan). Wait for the log line `started with 3 consumer(s)`.
+3. **API:** only then set `RABBITMQ_URL` on Vercel and redeploy. Doing this before the worker runs leaves emails waiting in the queue.
 
-Until both are in place, production keeps sending emails inline.
+MongoDB Atlas must allow the worker's connections: add the outbound IP ranges listed on the Render service's Connect → Outbound tab, or keep `0.0.0.0/0` as for Vercel. Render blocks outbound port 25, so use SMTP on 465 or 587 (or `EMAIL_SERVICE`).
+
+To switch the queue off again, remove `RABBITMQ_URL` from Vercel and redeploy: the API goes back to inline work, and the worker drains whatever is left.
