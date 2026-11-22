@@ -1,0 +1,86 @@
+# Local stack: RabbitMQ + MongoDB + Mailpit (catches every email, nothing is really sent) + API + worker.
+#   docker compose up -d --build
+#   docker compose up -d --scale worker=3      # competing consumers
+# RabbitMQ UI: http://localhost:15672 (guest/guest)   Mailpit inbox: http://localhost:8025
+# Secrets such as Cloudinary and JWT come from .env when it exists; the values below override it.
+
+x-app-env: &app-env
+  NODE_ENV: development
+  MONGODB_URI: mongodb://mongo:27017
+  DB_NAME: saknly
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  CLIENT_URL: ${CLIENT_URL:-http://localhost:3000}
+  EMAIL_SERVICE: ""
+  EMAIL_SMTP_HOST: mailpit
+  EMAIL_SMTP_PORT: "1025"
+  EMAIL_SMTP_USER: saknly
+  EMAIL_SMTP_PASS: local-only
+  EMAIL_FROM: '"Saknly" <no-reply@saknly.local>'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  # no host port: 27017 is often taken by a local MongoDB; the containers reach it as mongo:27017
+  mongo:
+    image: mongo:8
+    volumes:
+      - mongo-data:/data/db
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+      PORT: "5000"
+    ports:
+      - "5000:5000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+
+  worker:
+    build: .
+    command: ["node", "worker.js"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+    restart: unless-stopped
+    # time for in-flight messages to finish and be acked on `docker compose stop`
+    stop_grace_period: 30s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+      mailpit:
+        condition: service_started
+
+volumes:
+  rabbitmq-data:
+  mongo-data:
