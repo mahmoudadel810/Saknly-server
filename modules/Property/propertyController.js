@@ -5,6 +5,7 @@ import { AppError, asyncHandler } from '../../middelWares/errorMiddleware.js';
 import { removeMedia } from '../../services/mediaCleanup.js';
 import ApiFeatures from '../../utils/apiFeatures.js';
 import { dispatchEmail } from '../../services/notify.js';
+import { publishEvent } from '../../services/queue/publisher.js';
 import userModel from '../../Model/UserModel.js';
 import Agency from '../../Model/AgencyModel.js';
 import Comment from '../../Model/CommentModel.js';
@@ -381,6 +382,13 @@ export const deleteProperty = asyncHandler(async (req, res, next) =>
 
     // Remove from agency properties[] and users' wishlists; delete Cloudinary images (best effort)
     await cleanupPropertyReferences(property);
+
+    // Recorded by the audit consumer; a no-op when the queue is off
+    await publishEvent('property.deleted', {
+        propertyId: String(property._id),
+        title: property.title,
+        deletedBy: String(req.user._id),
+    });
 
     res.status(200).json({
         success: true,
