@@ -1,0 +1,10 @@
+node_modules
+logs
+tests
+coverage
+.git
+.vercel
+.env*
+config/.env
+*.md
+!README.md
