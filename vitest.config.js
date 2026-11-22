@@ -23,6 +23,8 @@ export default defineConfig({
             GOOGLE_CLIENT_ID: '',
             GOOGLE_CLIENT_SECRET: '',
             GEMINI_API_KEY: '',
+            // Queue off in tests even if .env sets it: every publish falls back to inline work
+            RABBITMQ_URL: '',
         },
     },
 });
