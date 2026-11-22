@@ -68,6 +68,18 @@ describe('queue consumer', () =>
         expect(channel.ack).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps re-parking a message that waits on another worker without using up attempts', async () =>
+    {
+        const channel = fakeChannel();
+        const waiting = Object.assign(new Error('in progress'), { countsAsAttempt: false });
+        const result = await handleMessage(channel, 'email.notifications', message({ attempt: 4 }), async () => { throw waiting; });
+        expect(result).toBe('retried');
+        const [queue, , options] = channel.sendToQueue.mock.calls[0];
+        expect(queue).toBe('email.notifications.retry.3');
+        expect(options.headers['x-attempt']).toBe(4);
+        expect(channel.nack).not.toHaveBeenCalled();
+    });
+
     it('dead-letters once every retry is used up', async () =>
     {
         const channel = fakeChannel();

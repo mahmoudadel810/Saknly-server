@@ -92,6 +92,20 @@ describe('email worker', () =>
             .forEach(r => expect(r.reason).toBeInstanceOf(MessageInProgressError));
     });
 
+    it('waits on a fresh claim and takes over a stale one left by a crashed worker', async () =>
+    {
+        await ProcessedMessage.create({ messageId: 'msg-7', queue: 'email.notifications' });
+        const waiting = await handleEmailEvent(approvedPayload, context('msg-7')).catch(e => e);
+        expect(waiting).toBeInstanceOf(MessageInProgressError);
+        expect(waiting.countsAsAttempt).toBe(false);
+        expect(sendEmail).not.toHaveBeenCalled();
+
+        await ProcessedMessage.updateOne({ messageId: 'msg-7' }, { $set: { claimedAt: new Date(Date.now() - 10 * 60 * 1000) } });
+        await handleEmailEvent(approvedPayload, context('msg-7'));
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+        expect((await ProcessedMessage.findOne({ messageId: 'msg-7' })).status).toBe('done');
+    });
+
     it('lets a failed send be retried with the same message id', async () =>
     {
         sendEmail.mockRejectedValueOnce(new Error('smtp down'));

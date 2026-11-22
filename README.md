@@ -134,8 +134,12 @@ worker (prefetch 10, manual ack)
 - The API awaits the publisher confirm before responding, because a frozen serverless function would drop an unconfirmed publish.
 - Consumers ack manually, and only after the work succeeded.
 - A failed message waits in a per-delay retry queue, which avoids head-of-line blocking from per-message TTLs. After 3 retries it goes to the DLQ. Errors that can't be fixed by retrying (bad payload, rejected recipient) go straight to the DLQ.
-- Delivery is at-least-once, so the email consumer claims each `messageId` in MongoDB (`ProcessedMessage`, 7-day TTL) and never sends twice. The audit consumer upserts by `messageId`.
+- Delivery is at-least-once, so the email consumer claims each `messageId` in MongoDB (`ProcessedMessage`, 7-day TTL), and a duplicate or redelivered copy is skipped. While another worker holds a claim, the copy waits in a retry queue without using up an attempt.
+- A worker that crashes mid-message leaves its claim behind. The redelivered copy takes over once the claim is 2 minutes old and sends the email then.
+- The audit consumer upserts by `messageId`.
 - On SIGTERM the worker stops taking messages, finishes the in-flight ones, then exits. Anything unacked is redelivered.
+- Known edge: if the broker stores a message but its confirm arrives after `QUEUE_PUBLISH_TIMEOUT_MS`, the API also sends that email inline, so it goes out twice.
+- Nothing replays the DLQ automatically. Inspect it in the RabbitMQ UI and move messages back by hand (or with the shovel plugin).
 
 **Scaling (competing consumers):** run more worker replicas on the same queues. `prefetch` caps the unacked messages per replica (email 10, media 5, audit 20), so a burst of Cloudinary deletes spreads across replicas instead of piling onto one. Locally:
 
