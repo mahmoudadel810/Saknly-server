@@ -7,7 +7,8 @@ import { getTokenFromHeader } from '../../middelWares/authMiddleware.js';
 import logger from '../../utils/logger.js';
 import { nanoid } from 'nanoid';
 import { clientUrl } from '../../services/emailTemplates/helpers.js';
-import { confirmationEmail, resetCodeEmail, passwordChangedEmail } from '../../services/emailTemplates/authEmails.js';
+import { resetCodeEmail } from '../../services/emailTemplates/authEmails.js';
+import { dispatchEmail } from '../../services/notify.js';
 
 export { clientUrl };
 
@@ -40,8 +41,9 @@ const trySendEmail = async (options) =>
     }
 };
 
-// Confirmation link targets the client page /confirm-email/<token>, which calls GET /auth/confirm-email/:token
-const sendConfirmationEmail = async (user) =>
+// Confirmation link targets the client page /confirm-email/<token>, which calls GET /auth/confirm-email/:token.
+// Queued for the worker when RabbitMQ is configured, otherwise sent inline.
+const sendConfirmationEmail = async (user, eventType) =>
 {
     const token = tokenFunction({
         // purpose marks it as a non-session token: refresh-token refuses it
@@ -52,9 +54,11 @@ const sendConfirmationEmail = async (user) =>
 
     const confirmationLink = `${clientUrl()}/confirm-email/${token}`;
 
-    return trySendEmail({
-        to: user.email,
-        ...confirmationEmail({ userName: user.userName, confirmationLink })
+    return dispatchEmail(eventType, {
+        userId: String(user._id),
+        email: user.email,
+        userName: user.userName,
+        confirmationLink,
     });
 };
 
@@ -88,7 +92,7 @@ export const register = asyncHandler(async (req, res, next) => {
     });
 
     // The account exists even if the email fails; the user can request a new link
-    const emailSent = await sendConfirmationEmail(newUser);
+    const emailSent = await sendConfirmationEmail(newUser, 'user.registered');
 
     res.status(201).json({
         success: true,
@@ -112,7 +116,7 @@ export const resendConfirmation = asyncHandler(async (req, res, next) => {
     const user = await userModel.findOne({ email: normalizedEmail, isConfirmed: false, provider: 'local' });
     if (user)
     {
-        await sendConfirmationEmail(user);
+        await sendConfirmationEmail(user, 'user.confirmation_resent');
     }
 
     // Generic response: don't reveal whether the email is registered
@@ -273,6 +277,7 @@ export const forgotPassword = asyncHandler(async (req, res, next) => {
         }
     );
 
+    // Sent inline, not queued: the code is removed again if it can't be delivered
     const emailed = await trySendEmail({
         to: user.email,
         ...resetCodeEmail({ code: resetPasswordToken })
@@ -333,10 +338,7 @@ export const resetPassword = asyncHandler(async (req, res, next) => {
     );
 
     // Notification is best effort: a mail failure must not turn the reset into an error
-    await trySendEmail({
-        to: user.email,
-        ...passwordChangedEmail()
-    });
+    await dispatchEmail('user.password_changed', { userId: String(user._id), email: user.email });
 
     res.status(200).json({
         success: true,
