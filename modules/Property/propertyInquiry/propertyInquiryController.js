@@ -8,15 +8,10 @@ import
   createPaginatedResponse,
 } from "../../../utils/pagination.js";
 import sendEmail from "../../../services/sendEmail.js";
+import { inquiryReceivedEmail } from "../../../services/emailTemplates/inquiryEmails.js";
 import logger from "../../../utils/logger.js";
 
 const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const escapeHtml = (value) => String(value ?? "")
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;");
 
 
 export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
@@ -64,18 +59,7 @@ export const createPropertyInquiry = asyncHandler(async (req, res, next) => {
       {
         await sendEmail({
           to: agent.email,
-          subject: "New Property Inquiry",
-          message: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-              <h2>New Property Inquiry</h2>
-              <p>You have received a new inquiry about property: ${escapeHtml(inquiry.property?.title || 'N/A')}</p>
-              <p><strong>From:</strong> ${escapeHtml(name)}</p>
-              <p><strong>Email:</strong> ${escapeHtml(email)}</p>
-              <p><strong>Phone:</strong> ${escapeHtml(phone)}</p>
-              <p><strong>Message:</strong> ${escapeHtml(message)}</p>
-              <p>Please respond to this inquiry as soon as possible.</p>
-            </div>
-          `
+          ...inquiryReceivedEmail({ propertyTitle: inquiry.property?.title, name, email, phone, message })
         });
       }
     } catch (error)
