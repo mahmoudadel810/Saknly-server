@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "worker": "node worker.js",
+    "worker:dev": "nodemon worker.js",
     "test": "vitest run",
     "seed": "node utils/seed.js",
     "test:smoke": "node scripts/smoke-test.js"
