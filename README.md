@@ -135,10 +135,11 @@ worker (prefetch 10, manual ack)
 - Consumers ack manually, and only after the work succeeded.
 - A failed message waits in a per-delay retry queue, which avoids head-of-line blocking from per-message TTLs. After 3 retries it goes to the DLQ. Errors that can't be fixed by retrying (bad payload, rejected recipient) go straight to the DLQ.
 - Delivery is at-least-once, so the email consumer claims each `messageId` in MongoDB (`ProcessedMessage`, 7-day TTL), and a duplicate or redelivered copy is skipped. While another worker holds a claim, the copy waits in a retry queue without using up an attempt.
-- A worker that crashes mid-message leaves its claim behind. The redelivered copy takes over once the claim is 2 minutes old and sends the email then.
-- The audit consumer upserts by `messageId`.
+- A worker that crashes mid-message leaves its claim behind. The redelivered copy takes over once the claim is 2 minutes old and sends the email then. SMTP sends time out well inside that window, so a slow but live send is never taken over. Each claim carries a token, so a holder can only release its own claim, and a failure to mark a sent email `done` is logged rather than retried.
+- When a publish fails, the API falls back to inline work under the same `messageId`. The inline email claims that id just like the worker, so a message the broker stored anyway (its confirm arrived after `QUEUE_PUBLISH_TIMEOUT_MS`) is still sent once. The audit row is written by the API in that case, and the consumer's upsert on the same `messageId` adds nothing.
+- A retried approval email is skipped when the listing was deleted or sent back to review in the meantime.
+- Approve and deny are single atomic updates on a listing still waiting for review: when two admins act at once, the first wins and the other gets a 409, so only one email goes out.
 - On SIGTERM the worker stops taking messages, finishes the in-flight ones, then exits. Anything unacked is redelivered.
-- Known edge: if the broker stores a message but its confirm arrives after `QUEUE_PUBLISH_TIMEOUT_MS`, the API also sends that email inline, so it goes out twice. A connection that is still opening at the timeout publishes nothing, so a slow cold start cannot cause this.
 - Nothing replays the DLQ automatically. Inspect it in the RabbitMQ UI and move messages back by hand (or with the shovel plugin).
 
 **Scaling (competing consumers):** run more worker replicas on the same queues. `prefetch` caps the unacked messages per replica (email 10, media 5, audit 20), so a burst of Cloudinary deletes spreads across replicas instead of piling onto one. Locally:
