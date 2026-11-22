@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import ProcessedMessage from '../../Model/ProcessedMessageModel.js';
 import logger from '../../utils/logger.js';
 
@@ -17,13 +18,15 @@ export class MessageInProgressError extends Error
 }
 
 // Claims the message id with a unique insert before running the handler, so two copies
-// delivered at the same time cannot both run. Returns false when the message was already handled.
+// delivered at the same time cannot both run. Resolves this holder's token, or null when the
+// message was already handled.
 const claim = async (messageId, queue) =>
 {
+    const token = randomUUID();
     try
     {
-        await ProcessedMessage.create({ messageId, queue });
-        return true;
+        await ProcessedMessage.create({ messageId, queue, claimToken: token });
+        return token;
     }
     catch (error)
     {
@@ -32,12 +35,12 @@ const claim = async (messageId, queue) =>
 
     const takenOver = await ProcessedMessage.findOneAndUpdate(
         { messageId, queue, status: 'processing', claimedAt: { $lt: new Date(Date.now() - STALE_CLAIM_MS) } },
-        { $set: { claimedAt: new Date() } }
+        { $set: { claimedAt: new Date(), claimToken: token } }
     );
-    if (takenOver) return true;
+    if (takenOver) return token;
 
     const existing = await ProcessedMessage.findOne({ messageId, queue }).lean();
-    if (existing?.status === 'done') return false;
+    if (existing?.status === 'done') return null;
     throw new MessageInProgressError(messageId);
 };
 
@@ -46,7 +49,8 @@ const claim = async (messageId, queue) =>
 // A failed run releases its claim, so a retry can run.
 export const runOnce = async (messageId, queue, fn) =>
 {
-    if (!(await claim(messageId, queue))) return { ran: false };
+    const token = await claim(messageId, queue);
+    if (!token) return { ran: false };
 
     let result;
     try
@@ -55,11 +59,21 @@ export const runOnce = async (messageId, queue, fn) =>
     }
     catch (error)
     {
-        await ProcessedMessage.deleteOne({ messageId, queue, status: 'processing' }).catch(() => { });
+        // Only our own claim: if it went stale and another holder took it over, that one is still running
+        await ProcessedMessage.deleteOne({ messageId, queue, status: 'processing', claimToken: token }).catch(() => { });
         throw error;
     }
 
-    await ProcessedMessage.updateOne({ messageId, queue }, { $set: { status: 'done', processedAt: new Date() } });
+    // The work is done (the email is sent). Failing here must not throw: the message would be
+    // retried and, once the claim went stale, sent a second time.
+    try
+    {
+        await ProcessedMessage.updateOne({ messageId, queue }, { $set: { status: 'done', processedAt: new Date() } });
+    }
+    catch (error)
+    {
+        logger.error(`[${queue}] ${messageId} handled but not marked done: ${error.message}`);
+    }
     return { ran: true, result };
 };
 
