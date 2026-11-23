@@ -33,7 +33,7 @@ All routes are under `/api/saknly/v1`. Authenticated requests send `Authorizatio
 | Area | Routes |
 |---|---|
 | Health | `GET /health` |
-| Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh-token`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/resend-confirmation` · `GET /auth/getMe`, `/auth/confirm-email/:token`, `/auth/google` |
+| Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh-token`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/resend-confirmation` · `GET /auth/getMe`, `/auth/confirm-email/:token`, `/auth/google` · `POST /auth/google/mobile` (`{ idToken }`, for the mobile app) |
 | Properties | `GET /properties/allProperties`, `/search`, `/featured`, `/getMostViewedProperties`, `/propertyDetails/:id`, `/similar/:id`, `/myProperties` · `POST /properties/addProperty` · `PUT /properties/updateProperty/:id` · `DELETE /properties/deleteProperty/:id` · favourites `POST/GET/DELETE /properties/:id/favorite` |
 | Moderation (admin) | `GET /properties/pending` · `PUT /properties/:id/approve` · `DELETE /properties/:id/deny` · `GET /admin/analytics` |
 | Users | `GET /users/me/wishlist` · `POST/DELETE /users/me/wishlist/:propertyId` · admin: `GET /users/get-all-users`, `/users/get-user/:id` · `PUT /users/update-user/:id` · `DELETE /users/delete-user/:id` |
@@ -66,6 +66,7 @@ npm run dev               # http://localhost:5000
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | for uploads | Photo storage |
 | `EMAIL_SERVICE` or `EMAIL_SMTP_HOST`/`PORT`/`USER`/`PASS`, `EMAIL_FROM` | for email | Confirmation and password-reset emails |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CALLBACK_URL` | for Google sign-in | Google OAuth |
+| `GOOGLE_MOBILE_CLIENT_IDS` | optional | More Google client IDs (comma separated) whose ID tokens `POST /auth/google/mobile` accepts, besides `GOOGLE_CLIENT_ID`. The mobile endpoint needs only `GOOGLE_CLIENT_ID`, not the secret |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | for the chatbot | Gemini (model defaults to `gemini-2.5-flash`) |
 | `SEED_ADMIN_PASSWORD`, `SEED_DEMO_PASSWORD` | | Passwords for the seed script; it generates random ones if they are not set |
 | `RABBITMQ_URL` | for the queue | RabbitMQ connection. Without it, emails and Cloudinary deletes run inline as before |
