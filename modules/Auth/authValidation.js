@@ -124,3 +124,12 @@ export const logoutValidator = {
             })
     }).options({ allowUnknown: true })
 };
+
+//=========================googleMobileValidator====================================
+export const googleMobileValidator = {
+    body: joi.object({
+        idToken: joi.string().trim().min(20).max(4096).required().messages({
+            "any.required": "Google ID token is required"
+        })
+    })
+};

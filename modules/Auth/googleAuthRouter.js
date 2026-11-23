@@ -1,7 +1,11 @@
 import express from 'express';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
-import userModel from '../../Model/UserModel.js';
+import { findOrCreateGoogleUser } from './googleAccount.js';
+import { verifyGoogleIdToken, googleAudiences } from '../../services/googleIdToken.js';
+import { asyncHandler, AppError } from '../../middelWares/errorMiddleware.js';
+import { validation } from '../../middelWares/validation.js';
+import { googleMobileValidator } from './authValidation.js';
 import { tokenFunction } from '../../utils/tokenFunction.js';
 import logger from '../../utils/logger.js';
 import { clientUrl } from './authController.js';
@@ -23,8 +27,6 @@ const resolveCallbackUrl = () =>
     return (process.env.BASE_URL || '').trim().replace(/\/+$/, '') + GOOGLE_CALLBACK_PATH;
 };
 
-const truncate = (value, max) => (value || '').trim().slice(0, max);
-
 const isGoogleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
 // Stateless: the JWT handed to the client is the session (no express-session / passport.session)
@@ -40,55 +42,18 @@ if (isGoogleConfigured)
     {
         try
         {
-            const email = profile.emails?.[0]?.value?.toLowerCase();
-            if (!email)
-            {
-                return done(null, false, { message: 'google_failed' });
-            }
-
-            let user = await userModel.findOne({ email });
-
-            if (user)
-            {
-                if (user.provider === 'local')
-                {
-                    return done(null, false, { message: 'email_already_registered' });
-                }
-                if (user.status !== 'active')
-                {
-                    return done(null, false, { message: 'google_failed' });
-                }
-                user.isLoggedIn = true;
-                user.lastLoginAt = new Date();
-                await user.save();
-                return done(null, user);
-            }
-
-            // Respect the model's max lengths (userName 30, firstName/lastName 20)
-            const displayName = (profile.displayName || email.split('@')[0]).trim();
-            const nameParts = displayName.split(/\s+/);
-            const firstName = truncate(profile.name?.givenName || nameParts[0], 20);
-            const lastName = truncate(profile.name?.familyName || nameParts.slice(1).join(' ') || firstName, 20);
-            let userName = truncate(displayName, 30);
-            if (userName.length < 3)
-            {
-                userName = truncate(email.split('@')[0].padEnd(3, '_'), 30);
-            }
-
-            const newUser = await userModel.create({
-                firstName,
-                lastName,
-                userName,
-                email,
-                provider: 'google',
+            const { user, failure } = await findOrCreateGoogleUser({
+                email: profile.emails?.[0]?.value,
                 googleId: profile.id,
-                isConfirmed: true,
-                isLoggedIn: true,
-                lastLoginAt: new Date(),
-                status: 'active',
+                displayName: profile.displayName,
+                givenName: profile.name?.givenName,
+                familyName: profile.name?.familyName,
             });
-
-            return done(null, newUser);
+            if (failure)
+            {
+                return done(null, false, { message: failure });
+            }
+            return done(null, user);
         } catch (err)
         {
             return done(err, null);
@@ -108,6 +73,66 @@ const requireGoogleConfigured = (req, res, next) =>
     }
     next();
 };
+
+// Mobile: the app signs in with Google on the phone and sends the ID token it got. Same account rules
+// and the same token and user as POST /auth/login. Needs only GOOGLE_CLIENT_ID (no client secret).
+router.post('/mobile', validation(googleMobileValidator), asyncHandler(async (req, res, next) =>
+{
+    if (googleAudiences().length === 0)
+    {
+        return next(new AppError('Google sign-in is not available', 503));
+    }
+
+    let identity;
+    try
+    {
+        identity = await verifyGoogleIdToken(req.body.idToken);
+    } catch (err)
+    {
+        logger.warn(`Google ID token rejected: ${err.message}`);
+        return next(new AppError('Google sign-in failed. Please try again.', 401));
+    }
+
+    if (!identity.emailVerified)
+    {
+        return next(new AppError('Your Google email is not verified.', 401));
+    }
+
+    const { user, failure } = await findOrCreateGoogleUser(identity);
+    if (failure === 'email_already_registered')
+    {
+        return next(new AppError('This email is registered with a password. Please log in with your email and password.', 409));
+    }
+    if (failure)
+    {
+        return next(new AppError('Google sign-in failed. Please try again.', 403));
+    }
+
+    const token = tokenFunction({
+        payload: {
+            id: user._id,
+            email: user.email,
+            userName: user.userName,
+            role: user.role,
+        }
+    });
+    if (!token)
+    {
+        return next(new AppError('Failed to generate token', 500));
+    }
+
+    res.status(200).json({
+        success: true,
+        message: 'Login successful',
+        token,
+        user: {
+            _id: user._id,
+            userName: user.userName,
+            email: user.email,
+            role: user.role,
+        },
+    });
+}));
 
 // Routes
 router.get('/', requireGoogleConfigured, passport.authenticate('google', {
