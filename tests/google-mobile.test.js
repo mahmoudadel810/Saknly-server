@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import User from '../Model/UserModel.js';
 import { verifyGoogleIdToken, googleAudiences } from '../services/googleIdToken.js';
+import logger from '../utils/logger.js';
 import { getApp, API } from './helpers/app.js';
 import { makeUser, auth } from './helpers/factories.js';
 
@@ -154,6 +155,26 @@ describe('POST /auth/google/mobile', () =>
         expect(res.status).toBe(401);
         expect(res.body.message).not.toMatch(/audience|recipient/i);
         expect(await User.countDocuments()).toBe(0);
+    });
+
+    it('does not write the token, or what is decoded from it, to the logs', async () =>
+    {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        const secretToken = 'header.eyJlbWFpbCI6InNlY3JldEBleGFtcGxlLnRlc3QifQ.signature';
+        verifyGoogleIdToken.mockRejectedValue(
+            new Error(`Token used too late, 1 > 0: {"email":"secret@example.test","sub":"123"} ${secretToken}`),
+        );
+
+        const res = await signIn({ idToken: secretToken });
+        expect(res.status).toBe(401);
+
+        const logged = warn.mock.calls.flat().join(' ');
+        expect(logged).toContain('Google ID token rejected');
+        expect(logged).toContain('Token used too late');
+        expect(logged).not.toContain('secret@example.test');
+        expect(logged).not.toContain('eyJlbWFpbCI6');
+        expect(logged).not.toContain(secretToken);
+        warn.mockRestore();
     });
 
     it('answers 503 when Google sign-in is not configured', async () =>

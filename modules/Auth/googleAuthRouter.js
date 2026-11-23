@@ -89,7 +89,9 @@ router.post('/mobile', validation(googleMobileValidator), asyncHandler(async (re
         identity = await verifyGoogleIdToken(req.body.idToken);
     } catch (err)
     {
-        logger.warn(`Google ID token rejected: ${err.message}`);
+        // Only the text before the first colon: the library appends the token, or its decoded payload
+        // (with the email), after it
+        logger.warn(`Google ID token rejected: ${String(err?.message).split(':')[0]}`);
         return next(new AppError('Google sign-in failed. Please try again.', 401));
     }
 
