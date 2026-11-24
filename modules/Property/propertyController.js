@@ -11,6 +11,7 @@ import Agency from '../../Model/AgencyModel.js';
 import Comment from '../../Model/CommentModel.js';
 import PropertyInquiry from '../../Model/PropertyInquiryModel.js';
 import logger from '../../utils/logger.js';
+import { CLEARABLE_FIELDS } from './propertyValidation.js';
 
 // Translation function for status values
 const translateText = (text) => {
@@ -84,9 +85,9 @@ const parseMaybeJson = (value) =>
 };
 
 // Remove every reference to a property (agency list, wishlists), the comments and inquiries
-// that belong to it, and its Cloudinary images. Used by owner delete and admin deny.
+// that belong to it, and its Cloudinary images. Used by owner delete, admin deny and account deletion.
 // Best effort: failures are logged, never thrown.
-const cleanupPropertyReferences = async (property) =>
+export const cleanupPropertyReferences = async (property) =>
 {
     const id = property._id;
     const results = await Promise.allSettled([
@@ -330,6 +331,13 @@ export const updateProperty = asyncHandler(async (req, res, next) =>
     // ---- fields (category can't change: it selects the schema)
     const updates = flattenForUpdate(pickPropertyFields(req.body, req.user));
     property.set(updates);
+    // Fields the owner emptied (`clear[]`), unless the same request also sets them
+    const clear = Array.isArray(req.body.clear) ? req.body.clear : [];
+    for (const path of new Set(clear))
+    {
+        if (!CLEARABLE_FIELDS.includes(path) || updates[path] !== undefined) continue;
+        property.set(path, path === 'studentHousingDetails.nearbyUniversities' ? [] : undefined);
+    }
     property.images = finalImagesList;
 
     if (!isAdmin(req.user))

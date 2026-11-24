@@ -1,6 +1,6 @@
 import { Router } from "express";
 import * as userController from './userController.js';
-import { updateUserValidator, deleteUserValidator } from './userValidation.js';
+import { updateUserValidator, deleteUserValidator, deleteMeValidator } from './userValidation.js';
 import { protect, admin } from '../../middelWares/authMiddleware.js';
 import { validation } from '../../middelWares/validation.js';
 
@@ -13,6 +13,9 @@ router.put('/update-user/:id', protect, admin, validation(updateUserValidator), 
 router.delete('/delete-user/:id', protect, admin, validation(deleteUserValidator), userController.deleteUser);
 
 // User wishlist routes
+// The signed-in user deletes their own account
+router.delete('/me', protect, validation(deleteMeValidator), userController.deleteMe);
+
 router.get('/me/wishlist', protect, userController.getUserWishlist);
 router.post('/me/wishlist/:propertyId', protect, userController.addToWishlist);
 router.delete('/me/wishlist/:propertyId', protect, userController.removeFromWishlist);

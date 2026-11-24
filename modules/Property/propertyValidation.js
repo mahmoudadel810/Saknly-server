@@ -108,6 +108,20 @@ export const PropertyValidator = {
     }).unknown(true),
 };
 
+// Optional fields an owner can empty on an edit. An empty form value means "not sent" here
+// (`.empty('')`), so a form lists each emptied field as `clear[]=<path>` instead; the
+// controller unsets the ones it isn't also setting. Required fields are never clearable.
+export const CLEARABLE_FIELDS = Object.freeze([
+    'floor', 'totalFloors',
+    'location.district', 'location.latitude', 'location.longitude',
+    'contactInfo.email', 'contactInfo.whatsapp',
+    // sale
+    'downPayment', 'installmentPeriodInYears', 'minInstallmentAmount', 'deliveryDate', 'deliveryTerms',
+    // rent / student
+    'deposit', 'availableFrom', 'utilities.cost', 'utilities.details', 'rules.other',
+    'studentHousingDetails.semester', 'studentHousingDetails.nearbyUniversities',
+]);
+
 // Partial update: nothing required
 export const UpdatePropertyValidator = {
     body: joi.object({
@@ -119,5 +133,6 @@ export const UpdatePropertyValidator = {
             isMain: bool(),
         }).unknown(true)),
         imagesToDelete: joi.array().items(joi.string()).single(),
+        clear: joi.array().items(joi.string().valid(...CLEARABLE_FIELDS)).single(),
     }).unknown(true),
 };
