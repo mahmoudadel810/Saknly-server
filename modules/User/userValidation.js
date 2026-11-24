@@ -1,5 +1,13 @@
 import joi from 'joi';
 
+//=========================deleteMeValidator====================================
+// The password is required for password accounts; the controller checks it (Google-only accounts have none).
+export const deleteMeValidator = {
+    body: joi.object({
+        password: joi.string().max(128).allow(''),
+    }),
+};
+
 //=========================updateUserValidator====================================
 export const updateUserValidator = {
     body: joi.object({

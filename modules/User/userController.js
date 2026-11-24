@@ -2,7 +2,11 @@ import User from "../../Model/UserModel.js";
 import { asyncHandler, AppError } from "../../middelWares/errorMiddleware.js";
 import Property from '../../Model/PropertyModel.js';
 import Comment from '../../Model/CommentModel.js';
-import { PUBLIC_PROPERTY_FILTER } from '../Property/propertyController.js';
+import PropertyInquiry from '../../Model/PropertyInquiryModel.js';
+import ContactUs from '../../Model/ContactModel.js';
+import { cleanupPropertyReferences, PUBLIC_PROPERTY_FILTER } from '../Property/propertyController.js';
+import { compareFunction } from '../../utils/passwordHashing.js';
+import logger from '../../utils/logger.js';
 
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -137,6 +141,57 @@ export const deleteUser = asyncHandler(async (req, res, next) => {
     res.status(200).json({
         success: true,
         message: 'User deleted successfully'
+    });
+});
+
+//=========================Delete own account====================================
+
+// DELETE /users/me: the signed-in user deletes their account and what they published (the app
+// stores require this to be possible from inside the app). Unlike the admin delete, which only
+// unlists, everything that holds the user's personal data goes: their listings (with photos,
+// comments and inquiries on them), their comments and favorites, and the inquiries and contact
+// messages sent from their email. A password account confirms with its password; a Google-only
+// account has none, so the signed-in token is the confirmation.
+export const deleteMe = asyncHandler(async (req, res, next) => {
+    const user = await User.findById(req.user._id).select('+password');
+    if (!user) {
+        return next(new AppError("User not found", 404));
+    }
+
+    if (user.password) {
+        const { password } = req.body;
+        // 400 like a wrong password at login: 401 means the session itself is invalid, and the
+        // apps sign the user out on it.
+        if (!password || !compareFunction({ payload: password, referenceData: user.password })) {
+            return next(new AppError('Password is not correct', 400));
+        }
+    }
+    if (user.role === 'admin' && user.status === 'active' && !(await hasOtherActiveAdmin(user._id))) {
+        return next(new AppError(LAST_ADMIN_MESSAGE, 409));
+    }
+
+    const listings = await Property.find({ owner: user._id }).select('images');
+    // Photos and the records hanging off each listing first (best effort, logged on failure),
+    // then the listings themselves.
+    await Promise.all(listings.map((listing) => cleanupPropertyReferences(listing)));
+    await Property.deleteMany({ owner: user._id });
+
+    const results = await Promise.allSettled([
+        Comment.deleteMany({ user: user._id }),
+        Property.updateMany({ favorites: user._id }, { $pull: { favorites: user._id } }),
+        PropertyInquiry.deleteMany({ email: user.email }),
+        // Contact emails are stored as typed: match them in any case.
+        ContactUs.deleteMany({ email: user.email }, { collation: { locale: 'en', strength: 2 } }),
+    ]);
+    results
+        .filter((r) => r.status === 'rejected')
+        .forEach((r) => logger.warn(`Account ${user._id} cleanup step failed: ${r.reason?.message || r.reason}`));
+
+    await User.findByIdAndDelete(user._id);
+
+    res.status(200).json({
+        success: true,
+        message: 'Your account was deleted',
     });
 });
 
