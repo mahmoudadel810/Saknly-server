@@ -10,6 +10,7 @@ import propertyCommentRoutes from './Property/propertyCommentRoutes.js';
 
 import chatRoutes from "./chatBot/chat.routes.js";
 import adminRoutes from './Admin/adminRoutes.js';
+import geoRoutes from './Geo/geoRoutes.js';
 
 const routes = {
   auth: {
@@ -53,6 +54,10 @@ const routes = {
   admin: {
     path: '/api/saknly/v1/admin',
     router: adminRoutes
+  },
+  geo: {
+    path: '/api/saknly/v1/geo',
+    router: geoRoutes
   }
 };
 

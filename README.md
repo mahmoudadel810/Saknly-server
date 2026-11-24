@@ -68,6 +68,7 @@ npm run dev               # http://localhost:5000
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CALLBACK_URL` | for Google sign-in | Google OAuth |
 | `GOOGLE_MOBILE_CLIENT_IDS` | optional | More Google client IDs (comma separated) whose ID tokens `POST /auth/google/mobile` accepts, besides `GOOGLE_CLIENT_ID`. The mobile endpoint needs only `GOOGLE_CLIENT_ID`, not the secret |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | for the chatbot | Gemini (model defaults to `gemini-2.5-flash`) |
+| `GEOLINK_API_KEY` | for `/geo/search` and `/geo/reverse` | GeoLink key (geolink-eg.com). Billed per request: keep it server-side only. Without it both answer 503. `GEOLINK_BASE_URL` overrides the API base (the local test server points it at a fake) |
 | `SEED_ADMIN_PASSWORD`, `SEED_DEMO_PASSWORD` | | Passwords for the seed script; it generates random ones if they are not set |
 | `RABBITMQ_URL` | for the queue | RabbitMQ connection. Without it, emails and Cloudinary deletes run inline as before |
 | `QUEUE_PUBLISH_TIMEOUT_MS`, `QUEUE_RETRY_DELAYS_MS` | | Publish confirm timeout (default 3000) and retry delays (default `10000,30000,60000`) |
